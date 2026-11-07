@@ -1,0 +1,7 @@
+{
+  "name": "Snake Tycoon Arena",
+  "description": "A 3D snake-style tycoon game with resource collection, growth mechanics, and AI combat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
