@@ -6,6 +6,8 @@ import {
   BOSS_SPAWN_TIME_REMAINING,
   STAGES,
   INITIAL_SKINS,
+  HANDCRAFTED_SKINS,
+  TOTAL_ARENA_SNAKES,
   EVOLUTION_TIERS,
   UPGRADE_CONFIG,
   UpgradeType,
@@ -13,6 +15,7 @@ import {
   SkinModelType,
   COLLECTION_SETS,
   getUpgradeCost,
+  getThemeByLifetimeCoins,
   LeaderboardEntry,
   ObstacleData,
   StageDefinition,
@@ -141,6 +144,9 @@ export interface SnakeEntity {
   shieldActive?: boolean;
   jawAngle?: number;
   targetJawAngle?: number;
+  customSkinName?: string;
+  hasCustomSkin?: boolean;
+  botGlobalIndex?: number;
 }
 
 export interface ChestData {
@@ -204,7 +210,7 @@ export class ThreeGameEngine {
   private sharedConfettiGeo = new THREE.BoxGeometry(0.4, 0.1, 0.2);
   private sharedSparkGeo = new THREE.SphereGeometry(0.15, 8, 8);
   private coinSegmentPool: THREE.Mesh[] = [];
-  private sharedCoinGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.15, 16);
+  private sharedCoinGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.25, 16);
   private sharedCoinMat = new THREE.MeshStandardMaterial({
     color: 0xffd700,
     metalness: 1.0,
@@ -218,10 +224,39 @@ export class ThreeGameEngine {
   private snakeCoins: SnakeEntity[] = [];
   private chests: ChestData[] = [];
   private coinPellets: CoinPelletData[] = [];
+  private diamondPellets: CoinPelletData[] = [];
+  private sharedDiamondGeo = new THREE.OctahedronGeometry(0.9, 0);
+  private sharedDiamondMat = new THREE.MeshStandardMaterial({
+    color: 0x22d3ee,
+    metalness: 1.0,
+    roughness: 0.05,
+    emissive: 0x0891b2,
+    emissiveIntensity: 0.6,
+  });
   public shakeIntensity: number = 0;
+  private cameraZoomOffset: number = 0;
   private pelletCombo: number = 0;
   private pelletComboTimer: number = 0;
   public killFeed: KillFeedEntry[] = [];
+  private fireProjectiles: { x: number; z: number; vx: number; vz: number; mesh: THREE.Mesh; active: boolean }[] = [];
+  private fireShotCooldown: number = 0;
+  private sharedFireGeo = new THREE.SphereGeometry(0.4, 12, 12);
+  private sharedFireMat = new THREE.MeshStandardMaterial({
+    color: 0xef4444,
+    emissive: 0xf97316,
+    emissiveIntensity: 1.2,
+    roughness: 0.2,
+  });
+
+  // Distant 12M Swarm Simulation
+  private distantSwarmMesh: THREE.InstancedMesh | null = null;
+  private distantSwarmData: {
+    x: number;
+    z: number;
+    heading: number;
+    speed: number;
+    phase: number;
+  }[] = [];
 
   // Arena & Match State
   public matchTimeRemaining: number = MATCH_DURATION_SECONDS;
@@ -250,10 +285,20 @@ export class ThreeGameEngine {
   };
 
   // Game Stats & State callback
-  private onStatsUpdate: (stats: GameStats) => void;
-  private onFloatingText: (text: FloatingText) => void;
-  private onMatchEnd: (isVictory: boolean) => void;
+  public onStatsUpdate: (stats: GameStats) => void;
+  public onFloatingText: (text: FloatingText) => void;
+  public onMatchEnd: (isVictory: boolean) => void;
   public stats: GameStats;
+
+  public syncWallet(coinsToAdd: number, gemsToAdd: number = 0) {
+    this.stats.totalPermanentCoins += coinsToAdd;
+    this.stats.cashEarnedThisMatch += coinsToAdd;
+    if (gemsToAdd > 0) {
+      this.stats.totalGems += gemsToAdd;
+      this.stats.gemsEarnedThisMatch += gemsToAdd;
+    }
+    this.onStatsUpdate({ ...this.stats });
+  }
 
   constructor(
     container: HTMLElement,
@@ -302,7 +347,7 @@ export class ThreeGameEngine {
 
     // 3. Scene & Camera
     this.scene = new THREE.Scene();
-    const currentStage = STAGES.find((s) => s.id === this.stats.currentStageId) || STAGES[0];
+    const currentStage = getThemeByLifetimeCoins(this.stats.totalPermanentCoins);
     this.scene.background = new THREE.Color(currentStage.fogColor);
     this.scene.fog = new THREE.FogExp2(currentStage.fogColor, 0.012);
 
@@ -428,6 +473,46 @@ export class ThreeGameEngine {
       rock.receiveShadow = !this.isSoftwareGl;
       this.scene.add(rock);
     }
+
+    // Distant 12,000,000 Snake Swarm Instanced Mesh (Visual Presence of 12M Arena Multitude)
+    const swarmCount = 360;
+    const swarmGeo = new THREE.CapsuleGeometry(0.7, 2.4, 4, 8);
+    swarmGeo.rotateZ(Math.PI / 2);
+    const swarmMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.8,
+    });
+    this.distantSwarmMesh = new THREE.InstancedMesh(swarmGeo, swarmMat, swarmCount);
+    this.distantSwarmData = [];
+
+    const customColors = HANDCRAFTED_SKINS.map(s => new THREE.Color(s.primaryColor));
+    for (let i = 0; i < swarmCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 160 + Math.random() * 950;
+      const x = Math.cos(angle) * dist;
+      const z = Math.sin(angle) * dist;
+      const heading = Math.random() * Math.PI * 2;
+      const speed = 7 + Math.random() * 7;
+      const color = customColors[i % customColors.length];
+
+      _mat4.makeRotationY(-heading + Math.PI / 2);
+      _mat4.setPosition(x, 0.55, z);
+      this.distantSwarmMesh.setMatrixAt(i, _mat4);
+      this.distantSwarmMesh.setColorAt(i, color);
+      this.distantSwarmData.push({
+        x,
+        z,
+        heading,
+        speed,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+    this.distantSwarmMesh.instanceMatrix.needsUpdate = true;
+    if (this.distantSwarmMesh.instanceColor) {
+      this.distantSwarmMesh.instanceColor.needsUpdate = true;
+    }
+    this.scene.add(this.distantSwarmMesh);
   }
 
   // ==========================================
@@ -513,11 +598,18 @@ export class ThreeGameEngine {
 
     // Pre-populate Coin Segment Pool (Zero Allocation)
     this.sharedCoinGeo.rotateX(Math.PI / 2);
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 500; i++) {
       const mesh = new THREE.Mesh(this.sharedCoinGeo, this.sharedCoinMat);
       mesh.visible = false;
       this.scene.add(mesh);
       this.coinSegmentPool.push(mesh);
+    }
+
+    // Initial loose coins on floor
+    for (let i = 0; i < 200; i++) {
+      const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 80);
+      const a = Math.random() * Math.PI * 2;
+      this.spawnCoinPellet(Math.cos(a) * r, Math.sin(a) * r, 10);
     }
   }
 
@@ -674,6 +766,7 @@ export class ThreeGameEngine {
       const x = (Math.random() - 0.5) * halfSize * 2;
       const z = (Math.random() - 0.5) * halfSize * 2;
       group.position.set(x, 1.2, z);
+      group.scale.set(1.8, 1.8, 1.8);
 
       let color = 0x3b82f6; // Magnet blue
       if (type === 'speed') color = 0x06b6d4; // Speed cyan
@@ -686,7 +779,7 @@ export class ThreeGameEngine {
         const magnetMat = new THREE.MeshStandardMaterial({
           color: 0x2563eb,
           emissive: 0x3b82f6,
-          emissiveIntensity: 0.8,
+          emissiveIntensity: 1.2,
           metalness: 0.8,
         });
         const magnetMesh = new THREE.Mesh(magnetGeo, magnetMat);
@@ -703,57 +796,66 @@ export class ThreeGameEngine {
         tipR.position.set(0.85, 0, -0.4);
         group.add(tipR);
       } else if (type === 'speed') {
-        // Lightning bolt prism
-        const shape = new THREE.Shape();
-        shape.moveTo(-0.2, 1.2);
-        shape.lineTo(0.5, 0.2);
-        shape.lineTo(0.1, 0.2);
-        shape.lineTo(0.6, -1.2);
-        shape.lineTo(-0.2, -0.2);
-        shape.lineTo(0.2, -0.2);
-        shape.closePath();
-
-        const extrudeSettings = { depth: 0.3, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.05, bevelThickness: 0.05 };
-        const boltGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-        const boltMat = new THREE.MeshStandardMaterial({
+        // Arrow shape (cyan shaft + arrowhead cone pointing forward)
+        const shaftGeo = new THREE.CylinderGeometry(0.12, 0.12, 1.0, 12);
+        const headGeo = new THREE.ConeGeometry(0.4, 0.7, 12);
+        const arrowMat = new THREE.MeshStandardMaterial({
           color: 0x06b6d4,
           emissive: 0x22d3ee,
-          emissiveIntensity: 0.9,
+          emissiveIntensity: 1.5,
           metalness: 0.8,
         });
-        const boltMesh = new THREE.Mesh(boltGeo, boltMat);
-        boltMesh.rotation.x = Math.PI / 2;
-        boltMesh.scale.set(0.8, 0.8, 0.8);
-        group.add(boltMesh);
+        const shaft = new THREE.Mesh(shaftGeo, arrowMat);
+        shaft.position.y = -0.3;
+        group.add(shaft);
+
+        const head = new THREE.Mesh(headGeo, arrowMat);
+        head.position.y = 0.45;
+        group.add(head);
       } else if (type === 'shield') {
-        // Shield / Ghost barrier sphere with surrounding ring
-        const sphereGeo = new THREE.SphereGeometry(1.0, 16, 16);
-        const sphereMat = new THREE.MeshStandardMaterial({
+        // Shield badge / crest shape with golden border rim
+        const shieldGeo = new THREE.BoxGeometry(1.2, 1.4, 0.2);
+        const shieldMat = new THREE.MeshStandardMaterial({
+          color: 0x3b82f6,
+          emissive: 0x1d4ed8,
+          emissiveIntensity: 1.5,
+          metalness: 0.7,
+        });
+        const shieldMesh = new THREE.Mesh(shieldGeo, shieldMat);
+        group.add(shieldMesh);
+
+        const rimGeo = new THREE.BoxGeometry(1.35, 1.55, 0.1);
+        const rimMat = new THREE.MeshStandardMaterial({
           color: 0xf59e0b,
           emissive: 0xfacc15,
-          emissiveIntensity: 0.8,
-          transparent: true,
-          opacity: 0.8,
-          metalness: 0.5,
-        });
-        const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
-        group.add(sphereMesh);
-
-        const haloGeo = new THREE.TorusGeometry(1.5, 0.12, 12, 24);
-        const haloMat = new THREE.MeshBasicMaterial({ color: 0xfef08a, wireframe: true });
-        const haloMesh = new THREE.Mesh(haloGeo, haloMat);
-        haloMesh.rotation.x = Math.PI / 2;
-        group.add(haloMesh);
-      } else if (type === 'fire') {
-        // Fire icon (flame shape)
-        const flameGeo = new THREE.ConeGeometry(0.8, 1.5, 12);
-        const flameMat = new THREE.MeshStandardMaterial({
-          color: 0xef4444,
-          emissive: 0xf97316,
           emissiveIntensity: 0.9,
+          metalness: 0.9,
         });
-        const flame = new THREE.Mesh(flameGeo, flameMat);
-        group.add(flame);
+        const rimMesh = new THREE.Mesh(rimGeo, rimMat);
+        rimMesh.position.z = -0.06;
+        group.add(rimMesh);
+      } else if (type === 'fire') {
+        // Fire flames (multi-layered flickering flame cones)
+        const outerFlameGeo = new THREE.ConeGeometry(0.7, 1.6, 12);
+        const outerFlameMat = new THREE.MeshStandardMaterial({
+          color: 0xef4444,
+          emissive: 0xdc2626,
+          emissiveIntensity: 0.9,
+          transparent: true,
+          opacity: 0.9,
+        });
+        const outerFlame = new THREE.Mesh(outerFlameGeo, outerFlameMat);
+        group.add(outerFlame);
+
+        const innerFlameGeo = new THREE.ConeGeometry(0.4, 1.2, 12);
+        const innerFlameMat = new THREE.MeshStandardMaterial({
+          color: 0xf59e0b,
+          emissive: 0xfbbf24,
+          emissiveIntensity: 1.5,
+        });
+        const innerFlame = new THREE.Mesh(innerFlameGeo, innerFlameMat);
+        innerFlame.position.set(0.05, 0.15, 0.05);
+        group.add(innerFlame);
       }
 
       this.scene.add(group);
@@ -987,97 +1089,67 @@ export class ThreeGameEngine {
   }
 
   private spawnBots(count: number) {
+    const botCount = Math.max(count, 48);
     const botNames = [
-      'CyberViper',
-      'NeonFang',
-      'GigaCobra',
-      'QuantumWorm',
-      'ShadowPython',
-      'SolarDrake',
-      'ApexTitan',
-      'FrostBite',
-      'MagmaWyrm',
-      'PhantomStrike',
-      'VoltEel',
-      'YetiRider',
-      'CoasterRacer',
-      'SharkFin',
-      'SnowGlide',
-      'EmeraldFang',
-      'HyperVenom',
-      'AstralSerpent',
-      'InfernoCobra',
-      'ThunderScale',
-      'RogueBasilisk',
-      'CosmicDragon',
-      'GlacialHydra',
-      'AbyssCrawler',
-      'OmegaStalker',
-      'GoldenPython',
-      'IronViper',
-      'BlazeStriker',
-      'TitanWorm',
-      'ToxicDart',
-      'StormRuler',
-      'VelocityDrake',
-    ];
-    const botSkins = [
-      { p: '#06b6d4', s: '#0284c7', g: '#38bdf8' }, // Cyan Neon
-      { p: '#f97316', s: '#c2410c', g: '#fbbf24' }, // Orange Fire
-      { p: '#a855f7', s: '#7e22ce', g: '#c084fc' }, // Violet Arc
-      { p: '#ec4899', s: '#be185d', g: '#f472b6' }, // Pink Pulse
-      { p: '#3b82f6', s: '#1d4ed8', g: '#60a5fa' }, // Cobalt Blue
-      { p: '#eab308', s: '#ca8a04', g: '#fde047' }, // Electric Gold
-      { p: '#10b981', s: '#047857', g: '#34d399' }, // Emerald Viper
-      { p: '#ef4444', s: '#b91c1c', g: '#f87171' }, // Crimson Blood
-      { p: '#8b5cf6', s: '#6d28d9', g: '#a78bfa' }, // Deep Purple
-      { p: '#14b8a6', s: '#0f766e', g: '#2dd4bf' }, // Aqua Marine
-      { p: '#f43f5e', s: '#be123c', g: '#fb7185' }, // Rose Shock
-      { p: '#84cc16', s: '#4d7c0f', g: '#a3e635' }, // Acid Lime
-      { p: '#6366f1', s: '#4338ca', g: '#818cf8' }, // Indigo Night
-      { p: '#d946ef', s: '#a21caf', g: '#f0abfc' }, // Fuchsia Wave
-      { p: '#0ea5e9', s: '#0369a1', g: '#7dd3fc' }, // Sky Glider
-      { p: '#f59e0b', s: '#b45309', g: '#fcd34d' }, // Amber Blaze
-    ];
-    const botModelTypes: SkinModelType[] = [
-      'robot',
-      'dragon',
-      'cat',
-      'food',
-      'celestial',
-      'classic',
-      'roller_coaster',
-      'shark',
-      'electric_eel',
-      'snowman',
-      'yeti',
+      'CyberViper', 'NeonFang', 'GigaCobra', 'QuantumWorm', 'ShadowPython',
+      'SolarDrake', 'ApexTitan', 'FrostBite', 'MagmaWyrm', 'PhantomStrike',
+      'VoltEel', 'YetiRider', 'CoasterRacer', 'SharkFin', 'SnowGlide',
+      'EmeraldFang', 'HyperVenom', 'AstralSerpent', 'InfernoCobra', 'ThunderScale',
+      'RogueBasilisk', 'CosmicDragon', 'GlacialHydra', 'AbyssCrawler', 'OmegaStalker',
+      'GoldenPython', 'IronViper', 'BlazeStriker', 'TitanWorm', 'ToxicDart',
+      'StormRuler', 'VelocityDrake'
     ];
 
-    for (let i = 0; i < count; i++) {
-      const skin = botSkins[i % botSkins.length];
-      const name = botNames[i % botNames.length];
-      const modelType = botModelTypes[i % botModelTypes.length];
+    for (let i = 0; i < botCount; i++) {
+      // 72% of AI snakes wear custom snake skins from HANDCRAFTED_SKINS!
+      const isCustomSkin = Math.random() < 0.72;
+      const customSkin = HANDCRAFTED_SKINS[i % HANDCRAFTED_SKINS.length];
       
+      const primaryColor = isCustomSkin ? customSkin.primaryColor : '#06b6d4';
+      const secondaryColor = isCustomSkin ? customSkin.secondaryColor : '#0284c7';
+      const glowColor = isCustomSkin ? customSkin.glowColor : '#38bdf8';
+      const modelType: SkinModelType = isCustomSkin ? (customSkin.modelType || 'classic') : 'classic';
+
+      const botGlobalIndex = Math.floor(Math.random() * TOTAL_ARENA_SNAKES) + 1;
+      const baseName = botNames[i % botNames.length];
+      const customSkinName = isCustomSkin ? customSkin.name : 'Classic Viper';
+      const name = isCustomSkin
+        ? `[${customSkin.name}] ${baseName}#${botGlobalIndex.toLocaleString()}`
+        : `${baseName}#${botGlobalIndex.toLocaleString()}`;
+
       // Dynamic radial distribution: close rivals, mid-field foragers, outer-ring snakes
-      const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+      const angle = (i / botCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
       let dist: number;
-      if (i < 8) {
-        dist = 25 + Math.random() * 40;
-      } else if (i < 20) {
-        dist = 70 + Math.random() * 120;
+      if (i < 12) {
+        dist = 22 + Math.random() * 45;
+      } else if (i < 28) {
+        dist = 70 + Math.random() * 140;
       } else {
-        dist = 200 + Math.random() * 250;
+        dist = 220 + Math.random() * 320;
       }
       const x = Math.cos(angle) * dist;
       const z = Math.sin(angle) * dist;
 
       const { headGroup, tongueMesh } = this.createSnakeHead(
-        skin.p,
-        skin.s,
-        skin.g,
+        primaryColor,
+        secondaryColor,
+        glowColor,
         modelType,
         false
       );
+
+      // Add a distinct custom skin badge marker above the head if wearing custom skin
+      if (isCustomSkin) {
+        const markerGeo = new THREE.OctahedronGeometry(0.35, 0);
+        const markerMat = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(glowColor),
+          wireframe: true,
+        });
+        const marker = new THREE.Mesh(markerGeo, markerMat);
+        marker.position.set(0, 1.45, 0);
+        headGroup.add(marker);
+      }
+
       this.scene.add(headGroup);
 
       const botLength = 6 + Math.floor(Math.random() * 8);
@@ -1098,10 +1170,13 @@ export class ThreeGameEngine {
         exp: 0,
         hp: 60,
         maxHp: 60,
-        skinPrimary: skin.p,
-        skinSecondary: skin.s,
-        skinGlow: skin.g,
+        skinPrimary: primaryColor,
+        skinSecondary: secondaryColor,
+        skinGlow: glowColor,
         skinModelType: modelType,
+        customSkinName,
+        hasCustomSkin: isCustomSkin,
+        botGlobalIndex,
         headGroup,
         tongueMesh,
         segments: [],
@@ -1119,9 +1194,9 @@ export class ThreeGameEngine {
       const maxPoolSize = 40;
       for (let s = 0; s < maxPoolSize; s++) {
         const segMesh = this.createSegmentMesh(
-          skin.p,
-          skin.s,
-          skin.g,
+          primaryColor,
+          secondaryColor,
+          glowColor,
           s,
           modelType,
           false
@@ -1142,6 +1217,23 @@ export class ThreeGameEngine {
   private respawnBot(bot: SnakeEntity) {
     bot.alive = true;
     bot.respawnTimer = 0;
+
+    // Respawn with a new identity from the 12,000,000 player pool!
+    bot.botGlobalIndex = Math.floor(Math.random() * TOTAL_ARENA_SNAKES) + 1;
+    const isCustomSkin = Math.random() < 0.72;
+    const customSkin = HANDCRAFTED_SKINS[Math.floor(Math.random() * HANDCRAFTED_SKINS.length)];
+    const baseNames = [
+      'CyberViper', 'NeonFang', 'GigaCobra', 'QuantumWorm', 'ShadowPython',
+      'SolarDrake', 'ApexTitan', 'FrostBite', 'MagmaWyrm', 'PhantomStrike',
+      'VoltEel', 'YetiRider', 'CoasterRacer', 'SharkFin', 'SnowGlide',
+      'EmeraldFang', 'HyperVenom', 'AstralSerpent'
+    ];
+    const baseName = baseNames[Math.floor(Math.random() * baseNames.length)];
+    bot.hasCustomSkin = isCustomSkin;
+    bot.customSkinName = isCustomSkin ? customSkin.name : 'Classic Viper';
+    bot.name = isCustomSkin
+      ? `[${customSkin.name}] ${baseName}#${bot.botGlobalIndex.toLocaleString()}`
+      : `${baseName}#${bot.botGlobalIndex.toLocaleString()}`;
 
     // Respawn around player at safe distance
     const angle = Math.random() * Math.PI * 2;
@@ -1449,8 +1541,8 @@ export class ThreeGameEngine {
   public spawnCoinPellet(x: number, z: number, coinValue: number = 10) {
     let cp = this.coinPellets.find((item) => !item.active);
     if (!cp) {
-      if (this.coinPellets.length >= 250) return; // Pool safety cap
-      const geo = new THREE.CylinderGeometry(0.45, 0.45, 0.12, 16);
+      if (this.coinPellets.length >= 500) return; // Increased pool safety cap
+      const geo = new THREE.CylinderGeometry(0.7, 0.7, 0.18, 16); // Increased size for visibility
       const mat = new THREE.MeshStandardMaterial({
         color: 0xffd700,
         metalness: 1.0,
@@ -1482,6 +1574,33 @@ export class ThreeGameEngine {
     }
 
     cp.mesh.position.set(x, 0.45, z);
+  }
+
+  public spawnDiamondPellet(x: number, z: number, gemValue: number = 1) {
+    let dp = this.diamondPellets.find((item) => !item.active);
+    if (!dp) {
+      if (this.diamondPellets.length >= 50) return;
+      const mesh = new THREE.Mesh(this.sharedDiamondGeo, this.sharedDiamondMat);
+      this.scene.add(mesh);
+
+      dp = {
+        id: 'diamond_pellet_' + Math.random().toString(36).substring(2, 8),
+        x,
+        z,
+        coinValue: gemValue, // Reusing field for gem value
+        spinSpeed: (180 * Math.PI) / 180,
+        mesh,
+        active: true,
+      };
+      this.diamondPellets.push(dp);
+    } else {
+      dp.x = x;
+      dp.z = z;
+      dp.coinValue = gemValue;
+      dp.active = true;
+      dp.mesh.visible = true;
+    }
+    dp.mesh.position.set(x, 0.8, z);
   }
 
   public openTreasureChest(chest: ChestData) {
@@ -1539,6 +1658,7 @@ export class ThreeGameEngine {
   // INPUT HANDLING
   // ==========================================
   private bindInputs() {
+    this.container.addEventListener('wheel', this.handleZoom.bind(this));
     window.addEventListener('keydown', (e) => {
       this.keysPressed[e.code] = true;
       if (e.code === 'Space') {
@@ -1554,6 +1674,12 @@ export class ThreeGameEngine {
     });
 
     window.addEventListener('resize', this.onWindowResize.bind(this));
+  }
+
+  private handleZoom(event: WheelEvent) {
+    if (this.isPaused || this.isGameOver) return;
+    this.cameraZoomOffset = Math.max(-15, Math.min(30, this.cameraZoomOffset + event.deltaY * 0.05));
+    event.preventDefault();
   }
 
   private onWindowResize() {
@@ -1583,10 +1709,13 @@ export class ThreeGameEngine {
 
     const delta = Math.min(this.clock.getDelta(), 0.05);
 
-    if (!this.isPaused && !this.isGameOver) {
-      this.updateMatchTime(delta);
-      this.updateControls(delta);
-      this.updatePlayer(delta);
+    if (!this.isPaused) {
+      if (!this.isGameOver) {
+        this.updateMatchTime(delta);
+        this.updateControls(delta);
+        this.updatePlayer(delta);
+      }
+
       this.updateBots(delta);
       if (this.boss && this.boss.alive) {
         this.updateBoss(delta);
@@ -1597,20 +1726,31 @@ export class ThreeGameEngine {
       this.updateSnakeCoins(delta);
       this.updateChests(delta);
       this.updateCoinPellets(delta);
+      this.updateDiamondPellets(delta);
+      this.updateFireProjectiles(delta);
       this.updateCollisions();
       this.updateParticles(delta);
 
       // Random Spawning of Special Entities
-      if (Math.random() < 0.005 && this.snakeCoins.length < 5) {
-        this.spawnSnakeCoin();
+      if (!this.isGameOver) {
+        if (Math.random() < 0.005 && this.snakeCoins.length < 5) {
+          this.spawnSnakeCoin();
+        }
+        if (Math.random() < 0.003 && this.chests.length < 6) {
+          this.spawnChest();
+        }
       }
-      if (Math.random() < 0.003 && this.chests.length < 6) {
-        this.spawnChest();
-      }
-      if (Math.random() < 0.008 && this.coinPellets.filter((cp) => cp.active).length < 60) {
+
+      // Coins keep spawning even after death
+      if (Math.random() < 0.015 && this.coinPellets.filter((cp) => cp.active).length < 250) {
         const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 80);
         const a = Math.random() * Math.PI * 2;
         this.spawnCoinPellet(Math.cos(a) * r, Math.sin(a) * r, 10);
+      }
+      if (Math.random() < 0.002 && this.diamondPellets.filter(dp => dp.active).length < 15) {
+        const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 100);
+        const a = Math.random() * Math.PI * 2;
+        this.spawnDiamondPellet(Math.cos(a) * r, Math.sin(a) * r, 1);
       }
 
       if (this.pelletComboTimer > 0) {
@@ -1621,10 +1761,32 @@ export class ThreeGameEngine {
       }
 
       this.updateCamera(delta);
+      this.updateDistantSwarm(delta);
     }
 
     this.renderer.render(this.scene, this.camera);
   };
+
+  private updateDistantSwarm(delta: number) {
+    if (!this.distantSwarmMesh || !this.distantSwarmData.length) return;
+    const time = this.clock.getElapsedTime();
+    for (let i = 0; i < this.distantSwarmData.length; i++) {
+      const item = this.distantSwarmData[i];
+      item.heading += Math.sin(time * 1.5 + item.phase) * 0.4 * delta;
+      item.x += Math.cos(item.heading) * item.speed * delta;
+      item.z += Math.sin(item.heading) * item.speed * delta;
+
+      const halfSize = this.arenaSize / 2 - 25;
+      if (Math.abs(item.x) > halfSize || Math.abs(item.z) > halfSize) {
+        item.heading = Math.atan2(-item.z, -item.x) + (Math.random() - 0.5);
+      }
+
+      _mat4.makeRotationY(-item.heading + Math.PI / 2);
+      _mat4.setPosition(item.x, 0.55, item.z);
+      this.distantSwarmMesh.setMatrixAt(i, _mat4);
+    }
+    this.distantSwarmMesh.instanceMatrix.needsUpdate = true;
+  }
 
   // ==========================================
   // MATCH TIME & SHRINKING ZONE
@@ -1763,7 +1925,7 @@ export class ThreeGameEngine {
     let currentSpeed = this.player.speed * upgradeSpeedBonus * speedPerk;
 
     if (this.stats.activePowerUps.speed > 0) {
-      currentSpeed *= 1.45;
+      currentSpeed *= 2.2;
     }
     if (this.isBoosting && this.player.length > 5) {
       currentSpeed *= 1.5;
@@ -1823,8 +1985,8 @@ export class ThreeGameEngine {
     }
 
     // Squash & Stretch based on jaw opening
-    const stretch = 1.0 + (this.player.jawAngle! / 0.65) * 0.25;
-    const squash = 1.0 - (this.player.jawAngle! / 0.65) * 0.15;
+    const stretch = 1.0 + (this.player.jawAngle! / 1.0) * 0.35;
+    const squash = 1.0 - (this.player.jawAngle! / 1.0) * 0.2;
     this.player.headGroup.scale.set(growthFactor, growthFactor * stretch, growthFactor * squash);
 
     // Darting tongue animation
@@ -1969,36 +2131,56 @@ export class ThreeGameEngine {
           bot.aiTarget = { x: this.player.x, z: this.player.z };
         } else {
           bot.aiState = 'forage';
-          // Find nearest cluster of pellets via spatial grid
-          let nearestPellet: PelletData | null = null;
-          let minDist = 999;
-          const gx = Math.floor((bot.x + 1250) / this.gridSize);
-          const gz = Math.floor((bot.z + 1250) / this.gridSize);
-          if (gx >= 0 && gx < this.gridDim && gz >= 0 && gz < this.gridDim) {
-            const gIdx = gz * this.gridDim + gx;
-            const cell = this.pelletGrid[gIdx];
-            if (cell && cell.length > 0) {
-              const testCount = Math.min(10, cell.length);
-              for (let c = 0; c < testCount; c++) {
-                const pIdx = cell[Math.floor(Math.random() * cell.length)];
-                const candidate = this.pellets[pIdx];
-                if (candidate && candidate.active) {
-                  const d = Math.hypot(candidate.x - bot.x, candidate.z - bot.z);
-                  if (d < minDist) {
-                    minDist = d;
-                    nearestPellet = candidate;
+          // Check for nearby bots to hunt too (Aggressive AI)
+          let targetBot: SnakeEntity | null = null;
+          for (const other of this.bots) {
+            if (other === bot || !other.alive) continue;
+            const d = Math.hypot(other.x - bot.x, other.z - bot.z);
+            if (d < 35 && bot.length > other.length * 1.2) {
+              targetBot = other;
+              break;
+            }
+          }
+
+          if (targetBot) {
+            bot.aiState = 'hunt';
+            bot.aiTarget = { x: targetBot.x, z: targetBot.z };
+          } else {
+            // Find nearest cluster of pellets via spatial grid
+            let nearestPellet: PelletData | null = null;
+            let minDist = 999;
+            const gx = Math.floor((bot.x + 1250) / this.gridSize);
+            const gz = Math.floor((bot.z + 1250) / this.gridSize);
+            if (gx >= 0 && gx < this.gridDim && gz >= 0 && gz < this.gridDim) {
+              const gIdx = gz * this.gridDim + gx;
+              const cell = this.pelletGrid[gIdx];
+              if (cell && cell.length > 0) {
+                const testCount = Math.min(10, cell.length);
+                for (let c = 0; c < testCount; c++) {
+                  const pIdx = cell[Math.floor(Math.random() * cell.length)];
+                  const candidate = this.pellets[pIdx];
+                  if (candidate && candidate.active) {
+                    const d = Math.hypot(candidate.x - bot.x, candidate.z - bot.z);
+                    if (d < minDist) {
+                      minDist = d;
+                      nearestPellet = candidate;
+                    }
                   }
                 }
               }
             }
-          }
-          if (nearestPellet) {
-            bot.aiTarget = { x: nearestPellet.x, z: nearestPellet.z };
-          } else {
-            bot.aiTarget = {
-              x: bot.x + (Math.random() - 0.5) * 80,
-              z: bot.z + (Math.random() - 0.5) * 80,
-            };
+            if (nearestPellet) {
+              bot.aiTarget = { x: nearestPellet.x, z: nearestPellet.z };
+            } else {
+              // Roam persistently across the arena (prevent circling)
+              const roamDist = 200 + Math.random() * 300;
+              const angle = Math.random() * Math.PI * 2;
+              bot.aiTarget = {
+                x: bot.x + Math.cos(angle) * roamDist,
+                z: bot.z + Math.sin(angle) * roamDist,
+              };
+              bot.aiTimer = 4.0 + Math.random() * 3.0; // Stay on this target longer
+            }
           }
         }
       }
@@ -2047,8 +2229,9 @@ export class ThreeGameEngine {
         jaw.rotation.x = bot.jawAngle!;
       }
 
-      const stretch = 1.0 + (bot.jawAngle! / 0.6) * 0.2;
-      bot.headGroup.scale.set(botGrowth, botGrowth * stretch, botGrowth * 0.9);
+      const stretch = 1.0 + (bot.jawAngle! / 1.0) * 0.35;
+      const squash = 1.0 - (bot.jawAngle! / 1.0) * 0.2;
+      bot.headGroup.scale.set(botGrowth, botGrowth * stretch, botGrowth * squash);
 
       bot.history.unshift({ x: bot.x, z: bot.z, heading: bot.heading });
       if (bot.history.length > 400) bot.history.pop();
@@ -2120,6 +2303,7 @@ export class ThreeGameEngine {
   }
 
   private updateCoinPellets(delta: number) {
+    let collected = false;
     this.coinPellets.forEach((cp) => {
       if (!cp.active) return;
 
@@ -2129,24 +2313,25 @@ export class ThreeGameEngine {
       const dPlayer = Math.hypot(this.player.x - cp.x, this.player.z - cp.z);
 
       // Vacuum magnet effect
-      if (this.stats.activePowerUps.magnet > 0 && dPlayer < 28) {
-        const pullSpeed = 22 * delta;
+      if (this.stats.activePowerUps.magnet > 0 && dPlayer < 65) {
+        const pullSpeed = 35 * delta;
         cp.x += ((this.player.x - cp.x) / dPlayer) * pullSpeed;
         cp.z += ((this.player.z - cp.z) / dPlayer) * pullSpeed;
         cp.mesh.position.set(cp.x, 0.45, cp.z);
       }
 
       // Consumed by player
-      if (dPlayer < 1.6) {
+      if (dPlayer < 2.2) {
         cp.active = false;
         cp.mesh.visible = false;
 
         // Add gold to player wallet
         this.stats.totalPermanentCoins += cp.coinValue;
         this.stats.cashEarnedThisMatch += cp.coinValue;
+        collected = true;
 
         // Play metallic coin sound effect & spark burst
-        soundManager.playCashOut();
+        soundManager.playCoinCollect();
         this.spawnParticleBurst(cp.x, cp.z, '#ffd700', 8, 'spark');
 
         this.onFloatingText({
@@ -2159,6 +2344,48 @@ export class ThreeGameEngine {
         });
       }
     });
+
+    if (collected) {
+      this.onStatsUpdate({ ...this.stats });
+    }
+  }
+
+  private updateDiamondPellets(delta: number) {
+    let collected = false;
+    this.diamondPellets.forEach((dp) => {
+      if (!dp.active) return;
+      dp.mesh.rotation.y += dp.spinSpeed * delta;
+      dp.mesh.rotation.x += delta * 0.5;
+
+      const dPlayer = Math.hypot(this.player.x - dp.x, this.player.z - dp.z);
+      if (this.stats.activePowerUps.magnet > 0 && dPlayer < 65) {
+        const pullSpeed = 35 * delta;
+        dp.x += ((this.player.x - dp.x) / dPlayer) * pullSpeed;
+        dp.z += ((this.player.z - dp.z) / dPlayer) * pullSpeed;
+        dp.mesh.position.set(dp.x, 0.8, dp.z);
+      }
+
+      if (dPlayer < 2.2) {
+        dp.active = false;
+        dp.mesh.visible = false;
+        this.stats.totalGems += dp.coinValue;
+        this.stats.gemsEarnedThisMatch += dp.coinValue;
+        collected = true;
+        soundManager.playPowerup();
+        this.spawnParticleBurst(dp.x, dp.z, '#22d3ee', 15, 'spark');
+        this.onFloatingText({
+          id: Math.random().toString(),
+          text: `💎 +${dp.coinValue} DIAMOND!`,
+          color: '#22d3ee',
+          x: window.innerWidth / 2,
+          y: 240,
+          opacity: 1,
+        });
+      }
+    });
+    if (collected) {
+      this.onStatsUpdate({ ...this.stats });
+    }
   }
 
   // ==========================================
@@ -2236,7 +2463,7 @@ export class ThreeGameEngine {
         (this.collectionPerks.allStatsBonus || 0)) *
       0.15;
     const magnetRadius =
-      (this.stats.activePowerUps.magnet > 0 ? 32 : 0) +
+      (this.stats.activePowerUps.magnet > 0 ? 65 : 0) +
       5 +
       this.stats.upgrades.magnetLevel * 2.5 +
       magnetPerk;
@@ -2295,7 +2522,7 @@ export class ThreeGameEngine {
                 if (dAgent < 1.3) {
                   p.active = false;
                   agent.targetLength += 0.4;
-                  agent.targetJawAngle = 0.65;
+                  agent.targetJawAngle = 1.4;
                   this.respawnPellet(p);
                   matrixDirty = true;
                   continue;
@@ -2318,8 +2545,13 @@ export class ThreeGameEngine {
     this.stats.score += 25;
     this.stats.pelletsEaten++;
 
+    if (snake.isPlayer) {
+      this.stats.totalPermanentCoins += 1;
+      this.stats.cashEarnedThisMatch += 1;
+    }
+
     // Trigger snappy munch animation
-    snake.targetJawAngle = 0.65;
+    snake.targetJawAngle = 1.4;
 
     if (!this.stats.bossAlive) {
       this.stats.stageProgress = Math.min(100, (this.stats.stageProgress || 0) + 1.8);
@@ -2412,69 +2644,188 @@ export class ThreeGameEngine {
       pu.group.rotation.y += 2.0 * delta;
       pu.group.position.y = 1.2 + Math.sin(this.clock.getElapsedTime() * 3 + pu.id) * 0.25;
 
-      const d = Math.hypot(pu.x - this.player.x, pu.z - this.player.z);
-      if (d < 2.0 && this.player.alive) {
+      // 1. Player collection
+      const dPlayer = Math.hypot(pu.x - this.player.x, pu.z - this.player.z);
+      if (dPlayer < 3.0 && this.player.alive) {
         pu.active = false;
         pu.group.visible = false;
-        soundManager.playPowerup();
+        soundManager.playPowerupPickup();
 
         const duration = 12; // 12 seconds
+        const typeStr = pu.type.toUpperCase();
+        this.addKillFeedEntry(`You collected a ${typeStr}! 🎁`, '#22d3ee');
+
         if (pu.type === 'magnet') {
           this.stats.activePowerUps.magnet = duration;
-          this.onFloatingText({
-            id: Math.random().toString(),
-            text: '🧲 MAGNET VACUUM ACTIVE (12s)!',
-            color: '#3b82f6',
-            x: window.innerWidth / 2,
-            y: 260,
-            opacity: 1,
-          });
         } else if (pu.type === 'speed') {
           this.stats.activePowerUps.speed = duration;
-          this.onFloatingText({
-            id: Math.random().toString(),
-            text: '⚡ HYPER SPEED SURGE (12s)!',
-            color: '#06b6d4',
-            x: window.innerWidth / 2,
-            y: 260,
-            opacity: 1,
-          });
         } else if (pu.type === 'shield') {
           this.stats.activePowerUps.shield = duration;
-          this.onFloatingText({
-            id: Math.random().toString(),
-            text: '🛡️ INVINCIBILITY SHIELD (12s)!',
-            color: '#fbbf24',
-            x: window.innerWidth / 2,
-            y: 260,
-            opacity: 1,
-          });
         } else if (pu.type === 'fire') {
           this.stats.activePowerUps.fire = duration;
-          this.onFloatingText({
-            id: Math.random().toString(),
-            text: '🔥 FIRE PROJECTILES ACTIVE (12s)!',
-            color: '#ef4444',
-            x: window.innerWidth / 2,
-            y: 260,
-            opacity: 1,
-          });
         }
 
-        // Trigger smooth mouth animation sequence on powerup pickup
-        this.player.targetJawAngle = 0.65;
+        this.onFloatingText({
+          id: Math.random().toString(),
+          text: `⚡ ${typeStr} ACTIVE!`,
+          color: '#fbbf24',
+          x: window.innerWidth / 2,
+          y: 260,
+          opacity: 1,
+        });
 
-        // Respawn powerup after 25s
-        setTimeout(() => {
-          pu.active = true;
-          pu.group.visible = true;
-          const halfSize = this.arenaSize / 2 - 10;
-          pu.x = (Math.random() - 0.5) * halfSize * 2;
-          pu.z = (Math.random() - 0.5) * halfSize * 2;
-          pu.group.position.set(pu.x, 1.2, pu.z);
-        }, 25000);
+        // Trigger smooth mouth animation
+        this.player.targetJawAngle = 1.4;
+
+        this.respawnPowerup(pu);
+        return;
+      }
+
+      // 2. Bot collection (they can "eat" them to prevent player from getting them)
+      for (const bot of this.bots) {
+        if (!bot.alive) continue;
+        const dBot = Math.hypot(pu.x - bot.x, pu.z - bot.z);
+        if (dBot < 2.5) {
+          pu.active = false;
+          pu.group.visible = false;
+          bot.targetLength += 5.0; // Small reward for bots
+          bot.targetJawAngle = 1.4;
+          this.addKillFeedEntry(`Opponent collected ${pu.type.toUpperCase()}!`, '#94a3b8');
+          this.respawnPowerup(pu);
+          break;
+        }
       }
     });
+  }
+
+  private respawnPowerup(pu: PowerUpItem) {
+    // Respawn powerup after 25s
+    setTimeout(() => {
+      pu.active = true;
+      pu.group.visible = true;
+      const halfSize = this.arenaSize / 2 - 10;
+      pu.x = (Math.random() - 0.5) * halfSize * 2;
+      pu.z = (Math.random() - 0.5) * halfSize * 2;
+      pu.group.position.set(pu.x, 1.2, pu.z);
+    }, 25000);
+  }
+
+  private shootFireProjectile() {
+    if (!this.player.alive) return;
+    let targetX = this.player.x + Math.cos(this.player.heading) * 30;
+    let targetZ = this.player.z + Math.sin(this.player.heading) * 30;
+    let minDist = Infinity;
+
+    this.bots.forEach((b) => {
+      if (!b.alive) return;
+      const d = Math.hypot(b.x - this.player.x, b.z - this.player.z);
+      if (d < minDist && d < 45) {
+        minDist = d;
+        targetX = b.x;
+        targetZ = b.z;
+      }
+    });
+
+    if (this.boss && this.boss.alive) {
+      const d = Math.hypot(this.boss.x - this.player.x, this.boss.z - this.player.z);
+      if (d < minDist) {
+        targetX = this.boss.x;
+        targetZ = this.boss.z;
+      }
+    }
+
+    const angle = Math.atan2(targetZ - this.player.z, targetX - this.player.x);
+    const speed = 40;
+    const vx = Math.cos(angle) * speed;
+    const vz = Math.sin(angle) * speed;
+
+    const mesh = new THREE.Mesh(this.sharedFireGeo, this.sharedFireMat);
+    mesh.position.set(this.player.x, 1.0, this.player.z);
+    this.scene.add(mesh);
+
+    this.fireProjectiles.push({
+      x: this.player.x,
+      z: this.player.z,
+      vx,
+      vz,
+      mesh,
+      active: true,
+    });
+
+    soundManager.playLaserShoot();
+  }
+
+  private updateFireProjectiles(delta: number) {
+    if (this.stats.activePowerUps.fire > 0) {
+      this.fireShotCooldown -= delta;
+      if (this.fireShotCooldown <= 0) {
+        this.fireShotCooldown = 0.35;
+        this.shootFireProjectile();
+      }
+    }
+
+    this.fireProjectiles.forEach((p) => {
+      if (!p.active) return;
+      p.x += p.vx * delta;
+      p.z += p.vz * delta;
+      p.mesh.position.set(p.x, 1.0, p.z);
+      p.mesh.rotation.y += 12 * delta;
+
+      // Check collision with bots
+      this.bots.forEach((bot) => {
+        if (!bot.alive || !p.active) return;
+        const d = Math.hypot(p.x - bot.x, p.z - bot.z);
+        if (d < 3.0) {
+          p.active = false;
+          p.mesh.visible = false;
+          this.scene.remove(p.mesh);
+          this.eliminateSnake(bot, this.player.name);
+          this.awardPlayerKill(bot);
+        }
+      });
+
+      // Check collision with boss
+      if (this.boss && this.boss.alive && p.active) {
+        const dBoss = Math.hypot(p.x - this.boss.x, p.z - this.boss.z);
+        if (dBoss < 4.5) {
+          p.active = false;
+          p.mesh.visible = false;
+          this.scene.remove(p.mesh);
+          this.boss.hp -= 45;
+          soundManager.playKill();
+          this.spawnParticleBurst(this.boss.x, this.boss.z, '#ef4444', 45, 'confetti');
+          this.onFloatingText({
+            id: Math.random().toString(),
+            text: `🔥 FIREBALL HIT BOSS! -45 HP!`,
+            color: '#f59e0b',
+            x: window.innerWidth / 2,
+            y: 160,
+            opacity: 1,
+          });
+          if (this.boss.hp <= 0) {
+            this.eliminateSnake(this.boss, this.player.name);
+            this.stats.bossAlive = false;
+            this.stats.score += 2500;
+            this.stats.totalPermanentCoins += 500;
+            this.stats.cashEarnedThisMatch += 500;
+            this.stats.totalGems += 5;
+            this.stats.gemsEarnedThisMatch += 5;
+            soundManager.playSpinWin();
+            this.onStatsUpdate({ ...this.stats });
+            setTimeout(() => this.triggerMatchEnd(), 2000);
+          }
+        }
+      }
+
+      // Arena bounds check
+      if (Math.hypot(p.x, p.z) > this.arenaSize / 2) {
+        p.active = false;
+        p.mesh.visible = false;
+        this.scene.remove(p.mesh);
+      }
+    });
+
+    this.fireProjectiles = this.fireProjectiles.filter((p) => p.active);
   }
 
 
@@ -2555,46 +2906,13 @@ export class ThreeGameEngine {
       const headThreshold = (playerGrowth + botGrowth) * 0.9;
 
       if (dHead < headThreshold) {
-        if (hasShield || this.player.length >= bot.length) {
-          // Player destroys Bot in head-on collision!
-          this.eliminateSnake(bot);
-          this.stats.botsKilled++;
-          
-          // Reward gems for 3-4 kills milestone
-          if (this.stats.botsKilled === 3 || this.stats.botsKilled === 4) {
-            this.stats.totalGems += 1;
-            this.onFloatingText({
-              id: `gem_${Date.now()}`,
-              text: `💎 DIAMOND EARNED (${this.stats.botsKilled} KILLS)!`,
-              color: '#38bdf8',
-              x: window.innerWidth / 2,
-              y: 180,
-              opacity: 1,
-            });
-          }
-
-          this.stats.score += 200;
-          this.stats.totalPermanentCoins += 50;
-          soundManager.playKill();
-          this.onFloatingText({
-            id: Math.random().toString(),
-            text: `⚔️ DEFEATED ${bot.name} (+200 PTS)!`,
-            color: '#10b981',
-            x: window.innerWidth / 2,
-            y: 150,
-            opacity: 1,
-          });
-        } else {
-          // Bot destroys Player in head-on collision!
-          this.eliminateSnake(this.player);
-          soundManager.playHurt();
-          return;
-        }
+        // Player head-on collision: AI always dies!
+        this.eliminateSnake(bot, this.player.name);
+        this.awardPlayerKill(bot);
       }
 
-      // Player Head vs Bot Body Segments (Tail Chasing / Eating from Behind - NON DEADLY)
-      // Check distance to bot segments
-      const bodyThreshold = (playerGrowth + botGrowth) * 0.6;
+      // Player Head vs Bot Body Segments (Player touches bot -> bot dies!)
+      const bodyThreshold = (playerGrowth + botGrowth) * 0.7;
       for (let s = 1; s < bot.segments.length; s++) {
         const seg = bot.segments[s];
         if (!seg.mesh.visible) continue;
@@ -2605,28 +2923,13 @@ export class ThreeGameEngine {
         );
 
         if (dSeg < bodyThreshold) {
-          // Consume opponent tail segment safely! (segment.ConsumeSegment; snakeLength += 1)
-          bot.targetLength = Math.max(3, bot.targetLength - 1.0);
-          this.player.targetLength += 1.0;
-          this.stats.score += 25;
-          
-          soundManager.playPelletEat();
-          this.player.targetJawAngle = 0.65;
-          this.spawnParticleBurst(seg.position.x, seg.position.y, bot.skinPrimary, 8, 'spark');
-          
-          this.onFloatingText({
-            id: Math.random().toString(),
-            text: `🦷 CHOMP! +1 TAIL`,
-            color: '#10b981',
-            x: window.innerWidth / 2,
-            y: 155,
-            opacity: 0.8,
-          });
+          this.eliminateSnake(bot, this.player.name);
+          this.awardPlayerKill(bot);
           break;
         }
       }
 
-      // Bot Head vs Player Body Segments (Bot eating player tail - NON DEADLY)
+      // Bot Head vs Player Body Segments (Bot touches player -> bot dies!)
       for (let s = 1; s < this.player.segments.length; s++) {
         const seg = this.player.segments[s];
         if (!seg.mesh.visible) continue;
@@ -2636,9 +2939,9 @@ export class ThreeGameEngine {
           bot.z - seg.position.z
         );
         if (dSeg < bodyThreshold) {
-          // Bot bites player tail from behind
-          this.player.targetJawAngle = 0.3; // Slight reaction
-          bot.targetJawAngle = 0.65;
+          // Bot hits player body -> Bot is eliminated!
+          this.eliminateSnake(bot, this.player.name);
+          this.awardPlayerKill(bot);
           break;
         }
       }
@@ -2664,15 +2967,11 @@ export class ThreeGameEngine {
         const headThreshold = (b1Growth + b2Growth) * 0.8;
 
         if (dHead < headThreshold) {
-          if (b1.length < b2.length) {
-            this.eliminateSnake(b1, b2.name);
-          } else {
-            this.eliminateSnake(b2, b1.name);
-          }
+          // Snake head-to-head collision disabled
           break;
         }
 
-        // b1 Head vs b2 Body (Tail munching)
+        // b1 Head vs b2 Body (Deadly Collision)
         const bodyThreshold = (b1Growth + b2Growth) * 0.6;
         for (let s = 1; s < b2.segments.length; s++) {
           const seg = b2.segments[s];
@@ -2680,9 +2979,7 @@ export class ThreeGameEngine {
           
           const dSeg = Math.hypot(b1.x - seg.position.x, b1.z - seg.position.z);
           if (dSeg < bodyThreshold) {
-            b2.targetLength = Math.max(5, b2.targetLength - 0.3);
-            b1.targetLength += 0.3;
-            b1.targetJawAngle = 0.65;
+            // Snake head-to-body collision disabled
             break;
           }
         }
@@ -2748,7 +3045,7 @@ export class ThreeGameEngine {
           // Deal damage to boss
           const dmg = this.canEatBoss ? 65 : 45;
           this.boss.hp -= dmg;
-          this.player.targetJawAngle = 0.65;
+          this.player.targetJawAngle = 1.4;
           soundManager.playKill();
           this.spawnParticleBurst(this.boss.x, this.boss.z, this.boss.skinPrimary, 20, 'confetti');
 
@@ -2770,7 +3067,9 @@ export class ThreeGameEngine {
             this.stats.score += 2500;
             this.stats.totalPermanentCoins += 500;
             this.stats.totalGems += 5;
+            this.stats.gemsEarnedThisMatch += 5;
             soundManager.playSpinWin();
+            this.onStatsUpdate({ ...this.stats });
 
             this.onFloatingText({
               id: Math.random().toString(),
@@ -2800,7 +3099,7 @@ export class ThreeGameEngine {
           this.boss.hp -= dmg;
           this.boss.targetLength = Math.max(10, this.boss.targetLength - 1.5);
           this.player.targetLength += 1.5;
-          this.player.targetJawAngle = 0.65;
+          this.player.targetJawAngle = 1.4;
           soundManager.playPelletEat();
           this.spawnParticleBurst(seg.position.x, seg.position.y, this.boss.skinPrimary, 15, 'spark');
 
@@ -2816,18 +3115,55 @@ export class ThreeGameEngine {
           });
 
           if (this.boss.hp <= 0) {
-            this.eliminateSnake(this.boss);
+            this.eliminateSnake(this.boss, this.player.name);
             this.stats.bossAlive = false;
             this.stats.score += 2500;
             this.stats.totalPermanentCoins += 500;
+            this.stats.cashEarnedThisMatch += 500;
             this.stats.totalGems += 5;
+            this.stats.gemsEarnedThisMatch += 5;
             soundManager.playSpinWin();
+            this.onStatsUpdate({ ...this.stats });
             setTimeout(() => this.triggerMatchEnd(), 2000);
           }
           break;
         }
       }
     }
+  }
+
+  // ==========================================
+  // KILL REWARDS & COMBAT SYSTEM
+  // ==========================================
+  public awardPlayerKill(victim: SnakeEntity) {
+    this.stats.botsKilled++;
+    
+    // Collect diamonds every single time a player gets a kill!
+    this.stats.totalGems += 1;
+    this.stats.gemsEarnedThisMatch += 1;
+
+    // Coins reward (bonus after 3 kills: 250 coins, otherwise 100 coins)
+    const coinReward = this.stats.botsKilled > 3 ? 250 : 100;
+    this.stats.totalPermanentCoins += coinReward;
+    this.stats.cashEarnedThisMatch += coinReward;
+    this.stats.score += 200;
+
+    soundManager.playKill();
+    this.spawnParticleBurst(victim.x, victim.z, '#22d3ee', 25, 'spark');
+    this.spawnParticleBurst(victim.x, victim.z, '#ffd700', 25, 'spark');
+
+    const skinTag = victim.customSkinName ? `[${victim.customSkinName}] ` : '';
+    this.onFloatingText({
+      id: `kill_${Date.now()}_${Math.random()}`,
+      text: `💎 +1 DIAMOND & +${coinReward} COINS! (Eliminated ${skinTag}${victim.name})`,
+      color: '#38bdf8',
+      x: window.innerWidth / 2,
+      y: 170,
+      opacity: 1,
+    });
+
+    // Notify React immediately so coins and diamonds are updated and persisted
+    this.onStatsUpdate({ ...this.stats });
   }
 
   // ==========================================
@@ -2844,9 +3180,17 @@ export class ThreeGameEngine {
 
     // Kill Feed Entry
     const killer = attackerName || (snake.isPlayer ? 'Arena Hazard' : 'A Rival Snake');
-    this.addKillFeedEntry(`${killer} eliminated ${snake.name}`);
+    if (snake.isPlayer) {
+      this.addKillFeedEntry(`YOU WERE ELIMINATED! 💀`, '#ef4444');
+    } else {
+      const isPlayerKill = attackerName === 'YOU' || (this.player && attackerName === this.player.name) || !attackerName;
+      const msg = isPlayerKill
+        ? `YOU defeated ${snake.name}! ⚔️`
+        : `${killer} defeated ${snake.name}`;
+      this.addKillFeedEntry(msg, snake.skinGlow || '#f8fafc');
+    }
 
-    // Burst loot onto arena floor!
+    // Burst poop onto arena floor!
     const lootCount = Math.min(45, Math.floor(snake.length * 2));
     for (let i = 0; i < lootCount; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -2854,16 +3198,33 @@ export class ThreeGameEngine {
       const lx = snake.x + Math.cos(angle) * dist;
       const lz = snake.z + Math.sin(angle) * dist;
 
-      // Find inactive or random pellet slot to repurpose as high-value loot
+      // Find inactive or random pellet slot to repurpose as brown 'poop'
       const p = this.pellets[i % this.pellets.length];
       if (p) {
         p.x = lx;
         p.z = lz;
         p.active = true;
-        p.value = 3; // High value loot
+        p.value = 0; // Poop has no value
+        // Use brown color for poop
+        this.pelletInstancedMesh.setColorAt(p.meshIndex, new THREE.Color(0x4B3621));
         _mat4.makeTranslation(lx, 0.45, lz);
         this.pelletInstancedMesh.setMatrixAt(p.meshIndex, _mat4);
       }
+    }
+    if (this.pelletInstancedMesh.instanceColor) {
+      this.pelletInstancedMesh.instanceColor.needsUpdate = true;
+    }
+
+    // Drop Gold Coins on death! (Requested: Coins appear after death)
+    const coinLootCount = snake.isPlayer ? 15 : 5;
+    for (let i = 0; i < coinLootCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 1.0 + Math.random() * 6;
+      this.spawnCoinPellet(
+        snake.x + Math.cos(angle) * dist,
+        snake.z + Math.sin(angle) * dist,
+        snake.isPlayer ? 25 : 15
+      );
     }
     this.pelletInstancedMesh.instanceMatrix.needsUpdate = true;
 
@@ -2909,8 +3270,8 @@ export class ThreeGameEngine {
     } else {
       // Dynamic: zooms out much more when snake grows giant from pellets
       const growthFactor = Math.min(2.5, 1 + (this.player.length * 0.012) + (this.stats.pelletsEaten / 120));
-      targetCamY = 32 * growthFactor;
-      targetCamZ = 24 * growthFactor;
+      targetCamY = (32 + this.cameraZoomOffset) * growthFactor;
+      targetCamZ = (24 + this.cameraZoomOffset) * growthFactor;
     }
 
     const camX = this.player.x;
@@ -2963,6 +3324,7 @@ export class ThreeGameEngine {
       playerPos: { x: this.player ? this.player.x : 0, z: this.player ? this.player.z : 0 },
       botPositions: this.bots.filter((b) => b.alive).map((b) => ({ x: b.x, z: b.z })),
       bossPos: this.boss && this.boss.alive ? { x: this.boss.x, z: this.boss.z } : null,
+      powerups: this.powerups.filter((p) => p.active).map((p) => ({ x: p.x, z: p.z, type: p.type })),
       currentRadius: this.arenaSize / 2,
       maxRadius: this.arenaSize / 2,
     };
@@ -2977,9 +3339,18 @@ export class ThreeGameEngine {
       isPlayer: boolean;
       isBoss: boolean;
       color: string;
+      customSkinName?: string;
+      customSkinBadge?: string;
     }[] = [];
 
+    // Player's dynamic rank in the 12,000,000 AI snake player arena!
+    const playerGlobalRank = Math.max(
+      1,
+      Math.floor(TOTAL_ARENA_SNAKES - (this.stats.score * 1650) - (this.player.length * 480) - (this.stats.botsKilled * 60000))
+    );
+
     if (this.player && this.player.alive) {
+      const equipped = INITIAL_SKINS.find((s) => s.id === this.stats.equippedSkinId) || INITIAL_SKINS[0];
       rawList.push({
         name: 'YOU (' + this.player.name + ')',
         length: Math.round(this.player.length),
@@ -2988,6 +3359,8 @@ export class ThreeGameEngine {
         isPlayer: true,
         isBoss: false,
         color: '#10b981',
+        customSkinName: equipped.name,
+        customSkinBadge: `[${equipped.name}]`,
       });
     }
 
@@ -3001,6 +3374,8 @@ export class ThreeGameEngine {
           isPlayer: false,
           isBoss: false,
           color: b.skinPrimary,
+          customSkinName: b.customSkinName,
+          customSkinBadge: b.hasCustomSkin ? `[${b.customSkinName}]` : undefined,
         });
       }
     });
@@ -3009,18 +3384,20 @@ export class ThreeGameEngine {
       rawList.push({
         name: '⚠️ ' + this.boss.name,
         length: Math.round(this.boss.length),
-        score: 5000,
+        score: 50000,
         level: 15,
         isPlayer: false,
         isBoss: true,
         color: '#ef4444',
+        customSkinName: 'Titan Boss Wyrm',
+        customSkinBadge: '[BOSS]',
       });
     }
 
     rawList.sort((a, b) => b.length - a.length);
 
-    return rawList.slice(0, 5).map((item, index) => ({
-      rank: index + 1,
+    return rawList.slice(0, 6).map((item, index) => ({
+      rank: item.isPlayer ? playerGlobalRank : index + 1,
       ...item,
     }));
   }
@@ -3137,6 +3514,8 @@ export class ThreeGameEngine {
     this.isVictory = false;
     this.isPaused = false;
     this.stats.bossAlive = false;
+    this.stats.cashEarnedThisMatch = 0;
+    this.stats.gemsEarnedThisMatch = 0;
 
     // Reset player
     if (this.player.headGroup) this.scene.remove(this.player.headGroup);
@@ -3163,13 +3542,9 @@ export class ThreeGameEngine {
     this.bossPatrolAngle = 0;
 
     // Reset Snake Coins
-    this.snakeCoins.forEach((sc) => {
-      sc.headGroup.children.forEach(child => {
-        if (child instanceof THREE.Mesh) child.visible = false;
-        else if (child instanceof THREE.Group) child.children.forEach(gc => { if (gc instanceof THREE.Mesh) gc.visible = false; });
-      });
+    this.snakeCoins.forEach(sc => {
       this.scene.remove(sc.headGroup);
-      sc.segments.forEach((s) => s.mesh.visible = false);
+      sc.segments.forEach(s => this.scene.remove(s.mesh));
     });
     this.snakeCoins = [];
 
@@ -3177,11 +3552,22 @@ export class ThreeGameEngine {
     this.chests.forEach((c) => this.scene.remove(c.meshGroup));
     this.chests = [];
 
-    // Reset Coin Pellets
+    // Reset Coin Pellets and Respawn initial batch
     this.coinPellets.forEach((cp) => {
       cp.active = false;
       cp.mesh.visible = false;
     });
+    for (let i = 0; i < 200; i++) {
+      const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 80);
+      const a = Math.random() * Math.PI * 2;
+      this.spawnCoinPellet(Math.cos(a) * r, Math.sin(a) * r, 10);
+    }
+
+    // Reset Fire Projectiles
+    this.fireProjectiles.forEach((p) => {
+      this.scene.remove(p.mesh);
+    });
+    this.fireProjectiles = [];
   }
 
   public dispose() {
@@ -3216,6 +3602,12 @@ export class ThreeGameEngine {
       sc.segments.forEach(s => s.mesh.visible = false);
     });
     this.chests.forEach(c => this.scene.remove(c.meshGroup));
+
+    if (this.distantSwarmMesh) {
+      this.scene.remove(this.distantSwarmMesh);
+      this.distantSwarmMesh.geometry.dispose();
+      this.distantSwarmMesh = null;
+    }
 
     if (this.renderer && this.renderer.domElement) {
       this.renderer.dispose();

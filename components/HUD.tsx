@@ -22,8 +22,19 @@ import {
   Compass,
   ChevronUp,
   ChevronDown,
+  RotateCcw,
+  Users,
+  Wrench,
 } from 'lucide-react';
-import { GameStats, EVOLUTION_TIERS, LeaderboardEntry, STAGES } from '@/lib/gameTypes';
+import { 
+  GameStats, 
+  EVOLUTION_TIERS, 
+  LeaderboardEntry, 
+  STAGES,
+  ARENA_TIERS,
+  getRankByLifetimeCoins,
+  TOTAL_ARENA_SNAKES
+} from '@/lib/gameTypes';
 import { KillFeedEntry } from '@/lib/threeGameEngine';
 import { soundManager } from '@/lib/audio';
 
@@ -44,6 +55,7 @@ interface HUDProps {
     playerPos: { x: number; z: number };
     botPositions: { x: number; z: number }[];
     bossPos: { x: number; z: number } | null;
+    powerups?: { x: number; z: number; type: 'magnet' | 'speed' | 'shield' | 'fire' }[];
     currentRadius: number;
     maxRadius: number;
   };
@@ -51,6 +63,8 @@ interface HUDProps {
   killFeedData?: KillFeedEntry[];
   hasClaimableMissions?: boolean;
   onTeleportBossHunter?: () => void;
+  lastMatchResults?: { coins: number; gems: number; score: number } | null;
+  onExitToMenu?: () => void;
 }
 
 export default function HUD({
@@ -71,6 +85,8 @@ export default function HUD({
   killFeedData = [],
   hasClaimableMissions = false,
   onTeleportBossHunter,
+  lastMatchResults,
+  onExitToMenu,
 }: HUDProps) {
   const [muted, setMuted] = React.useState(false);
   const [showHelp, setShowHelp] = React.useState(false);
@@ -97,21 +113,36 @@ export default function HUD({
   const timeFormatted = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
   const isUrgent = timeSecs <= 20;
 
+  const currentRank = getRankByLifetimeCoins(stats.totalPermanentCoins);
+
   return (
     <div className="pointer-events-none absolute inset-0 select-none overflow-hidden font-sans">
       {/* 1. MAIN MENU / START OVERLAY */}
       {gameState === 'menu' && (
-        <div className="pointer-events-auto absolute inset-0 z-50 flex flex-col items-center justify-between p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
+        <div className="pointer-events-auto absolute inset-0 z-50 flex flex-col items-center justify-between p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300 overflow-y-auto">
           {/* Header Bar */}
           <div className="flex w-full max-w-2xl items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 rounded-2xl border-2 border-amber-400 bg-slate-900 px-4 py-2 text-amber-300 shadow-lg">
-                <Coins className="h-5 w-5 text-amber-400" />
-                <span className="text-base font-black">{stats.totalPermanentCoins} COINS</span>
+              <div className="flex flex-col rounded-2xl border-2 border-amber-400 bg-slate-900 px-4 py-1 text-amber-300 shadow-lg">
+                <span className="text-[8px] font-black uppercase text-amber-500/80 -mb-1">Lifetime Coins</span>
+                <div className="flex items-center gap-2">
+                  <Coins className="h-4 w-4 text-amber-400" />
+                  <span className="text-base font-black">{stats.totalPermanentCoins.toLocaleString()}</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 rounded-2xl border-2 border-cyan-400 bg-slate-900 px-4 py-2 text-cyan-300 shadow-lg">
-                <Sparkles className="h-5 w-5 text-cyan-400" />
-                <span className="text-base font-black">{stats.totalGems} GEMS</span>
+              <div className="flex flex-col rounded-2xl border-2 border-cyan-400 bg-slate-900 px-4 py-1 text-cyan-300 shadow-lg">
+                <span className="text-[8px] font-black uppercase text-cyan-500/80 -mb-1">Total Diamonds</span>
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-cyan-400" />
+                  <span className="text-base font-black">{stats.totalGems.toLocaleString()}</span>
+                </div>
+              </div>
+              <div className="flex flex-col rounded-2xl border-2 border-slate-700 bg-slate-900 px-4 py-1 text-slate-300 shadow-lg">
+                <span className="text-[8px] font-black uppercase text-slate-500/80 -mb-1">Arena Tier</span>
+                <div className="flex items-center gap-2">
+                  <Trophy className="h-4 w-4" style={{ color: currentRank.color }} />
+                  <span className="text-base font-black" style={{ color: currentRank.color }}>{currentRank.name}</span>
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -128,14 +159,38 @@ export default function HUD({
           <div className="flex flex-col items-center text-center max-w-md my-auto">
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-950/60 px-4 py-1 text-xs font-black text-cyan-300">
               <Crown className="h-4 w-4 text-amber-400" />
-              <span>SNAKE CLASH MASSIVE ARENA</span>
+              <span>12,000,000 AI SNAKE PLAYERS ARENA</span>
             </div>
             <h1 className="text-3xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-cyan-300 to-blue-400 drop-shadow-lg tracking-wide uppercase">
               SNAKE TYCOON
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 mt-2 max-w-sm font-medium">
-              Slither across the massive arena, vacuum pallets, defeat rival serpents & venture outside the arena walls to defeat the Giant Boss!
+              Battle across a massive 12,000,000 AI snake player realm! Compete with rivals wearing custom mythical skins, vacuum pellets & venture outside the arena walls to defeat the Giant Boss!
             </p>
+
+            {/* Last Match Results Recap */}
+            {lastMatchResults && (
+              <div className="mt-4 flex flex-col items-center gap-2 p-4 rounded-2xl border-2 border-emerald-500/30 bg-emerald-950/20 backdrop-blur-sm animate-in zoom-in duration-300">
+                <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Award className="h-3.5 w-3.5" /> LAST MATCH RESULTS
+                </span>
+                <div className="flex items-center gap-4">
+                  <div className="flex flex-col items-center">
+                    <div className="flex items-center gap-1.5 text-amber-300 font-black">
+                      <Coins className="h-4 w-4" /> +{lastMatchResults.coins}
+                    </div>
+                    <span className="text-[9px] font-bold text-slate-400">COINS</span>
+                  </div>
+                  <div className="h-6 w-[1px] bg-slate-700/50" />
+                  <div className="flex flex-col items-center">
+                    <div className="flex items-center gap-1.5 text-cyan-300 font-black">
+                      <Sparkles className="h-4 w-4" /> +{lastMatchResults.gems}
+                    </div>
+                    <span className="text-[9px] font-bold text-slate-400">GEMS</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Chunky Green Play Button */}
             <button
@@ -148,7 +203,7 @@ export default function HUD({
           </div>
 
           {/* Quick Hub Buttons */}
-          <div className="flex flex-wrap items-center justify-center gap-2.5 max-w-xl w-full">
+          <div className="flex items-center justify-start gap-2.5 max-w-xl w-full overflow-x-auto pb-4 px-2">
             <button
               onClick={onOpenSkins}
               className="group relative flex items-center gap-2 rounded-2xl border-2 border-cyan-400 bg-slate-900/95 px-5 py-3 text-sm font-black text-cyan-300 hover:bg-cyan-900/40 transition-all shadow-[0_0_15px_rgba(34,211,238,0.3)] hover:scale-105 active:scale-95"
@@ -193,6 +248,22 @@ export default function HUD({
               <Gift className="h-4 w-4 text-pink-400" />
               <span>Free Spin</span>
             </button>
+
+            <button
+              onClick={() => (window as any)._openMultiplayerModal?.()}
+              className="flex items-center gap-2 rounded-2xl border-2 border-blue-400/90 bg-gradient-to-r from-blue-950/90 to-indigo-950/90 px-4 py-2.5 text-xs font-black text-blue-300 hover:scale-105 transition shadow-lg animate-pulse"
+            >
+              <Users className="h-4 w-4 text-blue-400" />
+              <span>Multiplayer</span>
+            </button>
+
+            <button
+              onClick={() => (window as any)._openModsModal?.()}
+              className="flex items-center gap-2 rounded-2xl border-2 border-purple-400/90 bg-gradient-to-r from-purple-950/90 to-fuchsia-950/90 px-4 py-2.5 text-xs font-black text-purple-300 hover:scale-105 transition shadow-lg"
+            >
+              <Wrench className="h-4 w-4 text-purple-400" />
+              <span>Mod Studio</span>
+            </button>
           </div>
         </div>
       )}
@@ -219,12 +290,12 @@ export default function HUD({
           {/* TIPPY-TOP RIGHT: Minimizable Leaderboard & Arena Radar Widget */}
           <div className="pointer-events-auto absolute top-2 right-2 z-40 flex flex-col items-end gap-1.5">
             {leaderboardData.length > 0 && (
-              <div className="w-48 rounded-2xl border border-slate-700/80 bg-slate-950/90 p-2 shadow-2xl backdrop-blur-md">
+              <div className="w-56 rounded-2xl border border-slate-700/80 bg-slate-950/90 p-2 shadow-2xl backdrop-blur-md">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1.5">
                   <div className="flex items-center gap-1.5">
                     <Trophy className="h-3.5 w-3.5 text-amber-400" />
                     <span className="text-[10px] font-black tracking-wider text-slate-200 uppercase">
-                      LEADERBOARD
+                      LEADERBOARD (12M)
                     </span>
                   </div>
                   <button
@@ -247,9 +318,9 @@ export default function HUD({
                             : 'text-slate-300'
                         }`}
                       >
-                        <div className="flex items-center gap-1.5 truncate max-w-[110px]">
+                        <div className="flex items-center gap-1.5 truncate max-w-[145px]">
                           <span
-                            className={`text-[10px] font-mono font-black ${
+                            className={`text-[10px] font-mono font-black shrink-0 ${
                               entry.rank === 1
                                 ? 'text-amber-400'
                                 : entry.rank === 2
@@ -259,17 +330,104 @@ export default function HUD({
                                 : 'text-slate-500'
                             }`}
                           >
-                            #{entry.rank}
+                            #{entry.rank > 9999 ? `${(entry.rank / 1000000).toFixed(1)}M` : entry.rank}
                           </span>
-                          <span className="truncate">{entry.name}</span>
+                          <span className="truncate flex items-center gap-1">
+                            {entry.customSkinBadge && (
+                              <span className="text-[8px] font-black px-1 py-0.2 rounded bg-purple-950/90 text-purple-300 border border-purple-500/50 shrink-0">
+                                {entry.customSkinBadge}
+                              </span>
+                            )}
+                            <span className="truncate">{entry.name}</span>
+                          </span>
                         </div>
-                        <span className="font-mono text-[10px] font-bold text-slate-400">
+                        <span className="font-mono text-[10px] font-bold text-slate-400 shrink-0 ml-1">
                           {entry.length}m
                         </span>
                       </div>
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Arena Minimap Radar with Specific Power-up Icons */}
+            {radarData && (
+              <div className="w-40 rounded-2xl border border-cyan-500/50 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-md relative overflow-hidden flex flex-col items-center">
+                <div className="flex items-center justify-between w-full border-b border-slate-800 pb-1 mb-1.5">
+                  <span className="text-[10px] font-black tracking-wider text-cyan-400 uppercase">
+                    ARENA RADAR
+                  </span>
+                </div>
+                {/* Minimap Circular Radar */}
+                <div className="relative w-32 h-32 rounded-full border-2 border-cyan-500/40 bg-slate-950/90 overflow-hidden shadow-inner flex items-center justify-center">
+                  {/* Grid Lines */}
+                  <div className="absolute inset-0 border border-cyan-500/20 rounded-full" />
+                  <div className="absolute top-1/2 left-0 right-0 h-[1px] bg-cyan-500/20" />
+                  <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-cyan-500/20" />
+
+                  {/* Player Dot */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping z-20" />
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-emerald-300 z-20" />
+
+                  {/* Bot Dots */}
+                  {radarData.botPositions.map((b, idx) => {
+                    const nx = 50 + ((b.x - radarData.playerPos.x) / radarData.maxRadius) * 45;
+                    const nz = 50 + ((b.z - radarData.playerPos.z) / radarData.maxRadius) * 45;
+                    if (nx < 0 || nx > 100 || nz < 0 || nz > 100) return null;
+                    return (
+                      <div
+                        key={idx}
+                        className="absolute w-1.5 h-1.5 rounded-full bg-red-500 z-10"
+                        style={{ left: `${nx}%`, top: `${nz}%` }}
+                      />
+                    );
+                  })}
+
+                  {/* Boss Dot */}
+                  {radarData.bossPos && (() => {
+                    const nx = 50 + ((radarData.bossPos.x - radarData.playerPos.x) / radarData.maxRadius) * 45;
+                    const nz = 50 + ((radarData.bossPos.z - radarData.playerPos.z) / radarData.maxRadius) * 45;
+                    if (nx < 0 || nx > 100 || nz < 0 || nz > 100) return null;
+                    return (
+                      <div
+                        key="boss"
+                        className="absolute w-3 h-3 rounded-full bg-amber-400 animate-bounce z-25 shadow-[0_0_8px_rgba(251,191,36,0.9)]"
+                        style={{ left: `${nx}%`, top: `${nz}%` }}
+                        title="Perimeter Boss"
+                      />
+                    );
+                  })()}
+
+                  {/* Power-up Icons on Minimap */}
+                  {radarData.powerups?.map((p, idx) => {
+                    const nx = 50 + ((p.x - radarData.playerPos.x) / radarData.maxRadius) * 45;
+                    const nz = 50 + ((p.z - radarData.playerPos.z) / radarData.maxRadius) * 45;
+                    if (nx < 0 || nx > 100 || nz < 0 || nz > 100) return null;
+                    let symbol = '⚡';
+                    if (p.type === 'magnet') symbol = '🧲';
+                    else if (p.type === 'speed') symbol = '⚡';
+                    else if (p.type === 'shield') symbol = '🛡️';
+                    else if (p.type === 'fire') symbol = '🔥';
+
+                    return (
+                      <div
+                        key={idx}
+                        className="absolute -translate-x-1/2 -translate-y-1/2 text-xs font-black z-30 animate-pulse drop-shadow-[0_0_4px_rgba(255,255,255,0.8)]"
+                        style={{ left: `${nx}%`, top: `${nz}%` }}
+                        title={`${p.type.toUpperCase()} Power-up`}
+                      >
+                        {symbol}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between w-full mt-1.5 text-[8px] font-bold text-slate-400 px-1">
+                  <span>🧲 Mag</span>
+                  <span>⚡ Spd</span>
+                  <span>🛡️ Shd</span>
+                  <span>🔥 Fir</span>
+                </div>
               </div>
             )}
           </div>
@@ -319,13 +477,27 @@ export default function HUD({
                   {timeFormatted}
                 </span>
               </div>
-              <span className="text-[10px] sm:text-xs font-bold text-slate-400 mt-0.5">
-                Massive Arena Mode
-              </span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+                <span className="text-[10px] sm:text-xs font-bold text-emerald-400">
+                  {(TOTAL_ARENA_SNAKES - stats.botsKilled).toLocaleString()} AI Snakes Active
+                </span>
+              </div>
             </div>
 
             {/* Right: Sound & Pause Actions */}
             <div className="flex items-center gap-1.5 sm:gap-2 mr-44 sm:mr-52">
+              {onExitToMenu && (
+                <button
+                  onClick={onExitToMenu}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border-2 border-slate-700 bg-slate-900/95 text-slate-200 hover:bg-slate-800 hover:text-cyan-400 transition-colors shadow-sm text-xs font-black"
+                  title="Back to Main Menu"
+                >
+                  <RotateCcw className="h-3.5 w-3.5 text-cyan-400" />
+                  <span className="hidden sm:inline">Menu</span>
+                </button>
+              )}
+
               <button
                 onClick={toggleSound}
                 className="p-2 rounded-2xl border border-slate-700 bg-slate-900/90 text-slate-300 hover:bg-slate-800 transition-colors shadow-sm"
@@ -417,11 +589,15 @@ export default function HUD({
             </div>
           )}
 
-          {/* In-Match Stats Ribbon (Tail Length) */}
-          <div className="pointer-events-auto absolute top-16 left-3 sm:left-6">
+          {/* In-Match Stats Ribbon (Tail Length & Live Arena Pool) */}
+          <div className="pointer-events-auto absolute top-16 left-3 sm:left-6 flex flex-col gap-1.5">
             <div className="flex items-center gap-2 rounded-full border-2 border-emerald-400 bg-emerald-950/85 px-4 py-1.5 text-sm font-black text-white shadow-lg">
               <span className="text-emerald-200">Length:</span>
               <span className="font-extrabold text-white">{stats.currentLength}m</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-full border border-cyan-500/40 bg-slate-950/85 px-3 py-1 text-[11px] font-bold text-cyan-300 shadow">
+              <span className="text-slate-400">Arena Alive:</span>
+              <span className="font-mono font-black text-cyan-400">{(TOTAL_ARENA_SNAKES - stats.botsKilled).toLocaleString()}</span>
             </div>
           </div>
 
@@ -516,6 +692,34 @@ export default function HUD({
             >
               Got It, Let&apos;s Battle!
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Pause Menu Overlay */}
+      {gameState === 'playing' && isPaused && (
+        <div className="pointer-events-auto absolute inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md">
+          <div className="max-w-xs w-full rounded-3xl border-2 border-slate-700 bg-slate-900 p-6 text-center shadow-2xl">
+            <h3 className="text-xl font-black text-slate-100 mb-1">ARENA PAUSED</h3>
+            <p className="text-xs text-slate-400 mb-5">Your coins and diamonds are safe and recorded.</p>
+            <div className="space-y-3">
+              <button
+                onClick={onTogglePause}
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-3 text-sm font-black text-slate-950 hover:bg-emerald-400 transition shadow-lg shadow-emerald-500/20"
+              >
+                <Play className="h-4 w-4" />
+                <span>RESUME MATCH</span>
+              </button>
+              {onExitToMenu && (
+                <button
+                  onClick={onExitToMenu}
+                  className="w-full flex items-center justify-center gap-2 rounded-2xl border-2 border-slate-700 bg-slate-800/90 py-3 text-sm font-black text-slate-200 hover:bg-slate-700 hover:text-white transition shadow-md"
+                >
+                  <RotateCcw className="h-4 w-4 text-cyan-400" />
+                  <span>BACK TO MAIN MENU</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

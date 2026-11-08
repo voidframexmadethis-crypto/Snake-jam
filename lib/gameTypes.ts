@@ -943,6 +943,7 @@ export interface GameStats {
   pelletsEaten: number;
   botsKilled: number;
   cashEarnedThisMatch: number;
+  gemsEarnedThisMatch: number;
   totalPermanentCoins: number;
   totalGems: number;
   currentMatchTime: number; // 80 seconds max
@@ -1058,6 +1059,8 @@ export const STAGES: StageDefinition[] = [
   },
 ];
 
+export const TOTAL_ARENA_SNAKES = 12_000_000;
+
 export interface LeaderboardEntry {
   rank: number;
   name: string;
@@ -1067,6 +1070,8 @@ export interface LeaderboardEntry {
   isPlayer: boolean;
   isBoss: boolean;
   color: string;
+  customSkinName?: string;
+  customSkinBadge?: string;
 }
 
 export interface ObstacleData {
@@ -1120,6 +1125,19 @@ export const INITIAL_MISSIONS: Mission[] = [
     completed: false,
     claimed: false,
     icon: 'Skull',
+  },
+  {
+    id: 'daily_survive',
+    title: 'Arena Survivor',
+    description: 'Survive in the arena for 60 seconds.',
+    type: 'daily',
+    target: 60,
+    current: 0,
+    rewardType: 'gems',
+    rewardAmount: 5,
+    completed: false,
+    claimed: false,
+    icon: 'Shield',
   },
   {
     id: 'daily_pellets',
@@ -1320,3 +1338,21 @@ export function getUpgradeCost(type: UpgradeType, currentLevel: number): number 
 export const MATCH_DURATION_SECONDS = 80; // 1 minute 20 seconds
 export const BOSS_SPAWN_TIME_REMAINING = 40; // Boss arrives halfway
 export const GACHA_BOX_COST = 300; // 300 coins to roll a mystery box
+
+export function getThemeByLifetimeCoins(coins: number): StageDefinition {
+  if (coins < 5000) return STAGES[0]; // Neon Grid
+  if (coins < 15000) return STAGES[1]; // Magma Cavern
+  return STAGES[4]; // Solar Wasteland
+}
+
+export const ARENA_TIERS = [
+  { name: 'Bronze', threshold: 0, color: '#cd7f32' },
+  { name: 'Silver', threshold: 5000, color: '#c0c0c0' },
+  { name: 'Gold', threshold: 15000, color: '#ffd700' },
+  { name: 'Platinum', threshold: 50000, color: '#e5e4e2' },
+  { name: 'Diamond', threshold: 100000, color: '#b9f2ff' },
+];
+
+export function getRankByLifetimeCoins(coins: number) {
+  return [...ARENA_TIERS].reverse().find(t => coins >= t.threshold) || ARENA_TIERS[0];
+}

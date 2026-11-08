@@ -385,6 +385,7 @@ export default function SkinsWardrobeModal({
   useEffect(() => {
     if (!adWatchingSkinId) return;
 
+    soundManager.playDailySpinTick();
     const interval = setInterval(() => {
       setAdCountdown((prev) => {
         if (prev <= 1) {
@@ -395,6 +396,7 @@ export default function SkinsWardrobeModal({
           setAdWatchingSkinId(null);
           return 0;
         }
+        soundManager.playDailySpinTick();
         return prev - 1;
       });
     }, 1000);
@@ -403,8 +405,8 @@ export default function SkinsWardrobeModal({
   }, [adWatchingSkinId, onUnlockSkin, onEquipSkin]);
 
   const startAdWatch = (skinId: string) => {
-    setAdWatchingSkinId(skinId);
     setAdCountdown(5);
+    setAdWatchingSkinId(skinId);
   };
 
   // Soft currency purchase handler (coins)

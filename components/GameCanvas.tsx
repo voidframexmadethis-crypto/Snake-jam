@@ -27,14 +27,17 @@ import StageSelectModal from './StageSelectModal';
 import TycoonModal from './TycoonPadsOverlay';
 import GameOverModal from './GameOverModal';
 import MissionsAchievementsModal from './MissionsAchievementsModal';
+import MultiplayerModLobbyModal from './MultiplayerModLobbyModal';
+import { MultiplayerRoom } from '@/lib/multiplayerSystem';
 
 const INITIAL_STATS: GameStats = {
   score: 0,
   pelletsEaten: 0,
   botsKilled: 0,
   cashEarnedThisMatch: 0,
-  totalPermanentCoins: 120, // Starting seed coins for testing upgrades!
-  totalGems: 5,
+  gemsEarnedThisMatch: 0,
+  totalPermanentCoins: 0,
+  totalGems: 0,
   currentMatchTime: MATCH_DURATION_SECONDS,
   level: 1,
   exp: 0,
@@ -63,11 +66,77 @@ const INITIAL_STATS: GameStats = {
   bossPhase: 1,
 };
 
+interface LastMatchResults {
+  coins: number;
+  gems: number;
+  score: number;
+}
+
 export default function GameCanvas() {
   const mountRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<ThreeGameEngine | null>(null);
 
+  // Persistence: Initial load from localStorage
   const [stats, setStats] = useState<GameStats>(INITIAL_STATS);
+  const [unlockedSkinIds, setUnlockedSkinIds] = useState<string[]>(['emerald']);
+
+  const [hasMounted, setHasMounted] = useState(false);
+
+  // Persistence: Initial load from localStorage on mount
+  useEffect(() => {
+    let initialCoins = 0;
+    let initialGems = 0;
+    let initialUpgrades = INITIAL_STATS.upgrades;
+    let initialLevel = 1;
+    let initialSkins = ['emerald'];
+
+    try {
+      const savedCoins = localStorage.getItem('SavedLifetimeCoins');
+      const savedGems = localStorage.getItem('SavedTotalGems');
+      const savedUpgrades = localStorage.getItem('SavedUpgrades');
+      const savedLevel = localStorage.getItem('SavedLevel');
+      const savedSkins = localStorage.getItem('SavedUnlockedSkins');
+
+      if (savedCoins !== null && savedCoins !== '') {
+        const val = parseInt(savedCoins, 10);
+        if (!isNaN(val)) initialCoins = val;
+      }
+      if (savedGems !== null && savedGems !== '') {
+        const val = parseInt(savedGems, 10);
+        if (!isNaN(val)) initialGems = val;
+      }
+      if (savedUpgrades) {
+        initialUpgrades = JSON.parse(savedUpgrades);
+      }
+      if (savedLevel) {
+        const val = parseInt(savedLevel, 10);
+        if (!isNaN(val) && val > 0) initialLevel = val;
+      }
+      if (savedSkins) {
+        const parsed = JSON.parse(savedSkins);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          initialSkins = parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading stored game data:', e);
+    }
+
+    const timer = setTimeout(() => {
+      setStats((prev) => ({
+        ...prev,
+        totalPermanentCoins: initialCoins,
+        totalGems: initialGems,
+        upgrades: initialUpgrades,
+        level: initialLevel,
+      }));
+      setUnlockedSkinIds(initialSkins);
+      setHasMounted(true);
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, []);
+
   const [gameState, setGameState] = useState<'menu' | 'countdown' | 'playing' | 'gameover'>('menu');
   const [countdownSec, setCountdownSec] = useState<number>(3);
   const [isPaused, setIsPaused] = useState(false);
@@ -84,11 +153,35 @@ export default function GameCanvas() {
   const [isStagesOpen, setIsStagesOpen] = useState(false);
   const [isSpinOpen, setIsSpinOpen] = useState(false);
   const [isMissionsOpen, setIsMissionsOpen] = useState(false);
-  const [unlockedSkinIds, setUnlockedSkinIds] = useState<string[]>(['emerald']);
+  const [isMultiplayerOpen, setIsMultiplayerOpen] = useState(false);
+  const [isModsOpen, setIsModsOpen] = useState(false);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any)._openMultiplayerModal = () => setIsMultiplayerOpen(true);
+      (window as any)._openModsModal = () => setIsModsOpen(true);
+    }
+  }, []);
   // Leaderboard and kill feed data
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
   const [killFeedData, setKillFeedData] = useState<KillFeedEntry[]>([]);
+  const [lastMatchResults, setLastMatchResults] = useState<LastMatchResults | null>(null);
+
+  // Persistence: Save on match end or upgrades, only after initial load has finished
+  useEffect(() => {
+    if (!hasMounted) return;
+    if (gameState === 'gameover' || gameState === 'menu') {
+      try {
+        localStorage.setItem('SavedLifetimeCoins', stats.totalPermanentCoins.toString());
+        localStorage.setItem('SavedTotalGems', stats.totalGems.toString());
+        localStorage.setItem('SavedUpgrades', JSON.stringify(stats.upgrades));
+        localStorage.setItem('SavedLevel', stats.level.toString());
+        localStorage.setItem('SavedUnlockedSkins', JSON.stringify(unlockedSkinIds));
+      } catch (e) {
+        console.warn('Error saving game data:', e);
+      }
+    }
+  }, [hasMounted, gameState, stats.totalPermanentCoins, stats.totalGems, stats.upgrades, stats.level, unlockedSkinIds]);
 
   // Floating text queue
   const addFloatingText = useCallback((textData: FloatingText) => {
@@ -155,28 +248,87 @@ export default function GameCanvas() {
     isVictory: false,
   });
 
-  // Initialize Three.js Engine with optimized 80 FPS game loop and object pooling
+  // Initialize Three.js Engine with loaded stats and object pooling
   useEffect(() => {
-    if (!mountRef.current) return;
+    if (!mountRef.current || !hasMounted) return;
 
     const engine = new ThreeGameEngine(
       mountRef.current,
-      (newStats) => setStats({ ...newStats }),
+      (newStats) => {
+        setStats({ ...newStats });
+        // Immediately persist to localStorage whenever stats update (on kill, pellet eat, etc.)
+        try {
+          localStorage.setItem('SavedLifetimeCoins', newStats.totalPermanentCoins.toString());
+          localStorage.setItem('SavedTotalGems', newStats.totalGems.toString());
+        } catch {}
+      },
       addFloatingText,
       (isVictory) => {
         setMatchResult({ isGameOver: true, isVictory });
         setGameState('gameover');
+        if (engineRef.current) {
+          const s = engineRef.current.stats;
+          setLastMatchResults({
+            coins: s.cashEarnedThisMatch,
+            gems: s.gemsEarnedThisMatch,
+            score: s.score,
+          });
+          try {
+            localStorage.setItem('SavedLifetimeCoins', s.totalPermanentCoins.toString());
+            localStorage.setItem('SavedTotalGems', s.totalGems.toString());
+            localStorage.setItem('SavedUpgrades', JSON.stringify(s.upgrades));
+            localStorage.setItem('SavedLevel', s.level.toString());
+          } catch {}
+        }
       },
-      INITIAL_STATS
+      stats // Passes the loaded stats!
     );
     engine.isPaused = true; // Pause engine initially for main menu
     engineRef.current = engine;
+
+    // Direct global link for WalletSyncManager compatibility
+    if (typeof window !== 'undefined') {
+      (window as any).WalletSyncManager = {
+        AddCoinsAndSave: (amount: number) => {
+          if (engineRef.current) {
+            engineRef.current.syncWallet(amount);
+          }
+        },
+        addCoinsAndSave: (amount: number) => {
+          if (engineRef.current) {
+            engineRef.current.syncWallet(amount);
+          }
+        },
+      };
+    }
 
     return () => {
       engine.dispose();
       engineRef.current = null;
     };
-  }, [addFloatingText]);
+  }, [hasMounted, addFloatingText]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Return cleanly to main menu while preserving all coins and diamonds
+  const handleBackToMenu = useCallback(() => {
+    setGameState('menu');
+    setMatchResult({ isGameOver: false, isVictory: false });
+    setIsPaused(false);
+    if (engineRef.current) {
+      engineRef.current.isPaused = true;
+      engineRef.current.isGameOver = false;
+      const curStats = engineRef.current.stats;
+      setStats({ ...curStats });
+      try {
+        localStorage.setItem('SavedLifetimeCoins', curStats.totalPermanentCoins.toString());
+        localStorage.setItem('SavedTotalGems', curStats.totalGems.toString());
+        localStorage.setItem('SavedUpgrades', JSON.stringify(curStats.upgrades));
+        localStorage.setItem('SavedLevel', curStats.level.toString());
+        localStorage.setItem('SavedUnlockedSkins', JSON.stringify(unlockedSkinIds));
+      } catch (e) {
+        console.warn('Error saving to localStorage on back to menu:', e);
+      }
+    }
+  }, [unlockedSkinIds]);
 
   // Handle Start Match Sequence (Menu -> 3s Countdown -> Direct Action)
   const handleStartMatch = () => {
@@ -221,13 +373,13 @@ export default function GameCanvas() {
     }
   }, []);
 
-  const togglePause = () => {
+  const togglePause = useCallback(() => {
     if (engineRef.current) {
       const next = !isPaused;
       setIsPaused(next);
       engineRef.current.isPaused = next;
     }
-  };
+  }, [isPaused]);
 
   const handleSetCameraMode = (mode: 'dynamic' | 'close' | 'isometric') => {
     setCameraMode(mode);
@@ -387,6 +539,27 @@ export default function GameCanvas() {
     }
   };
 
+  // Update missions progress
+  useEffect(() => {
+    if (gameState !== 'playing') return;
+
+    const timer = setTimeout(() => {
+      setMissions(prev => prev.map(m => {
+          if (m.claimed || m.completed) return m;
+          
+          let newCurrent = m.current;
+          if (m.id === 'daily_pellets') newCurrent = stats.pelletsEaten;
+          if (m.id === 'daily_survive') newCurrent = Math.floor(MATCH_DURATION_SECONDS - stats.currentMatchTime);
+
+          if (newCurrent >= m.target) {
+              return { ...m, current: newCurrent, completed: true };
+          }
+          return { ...m, current: newCurrent };
+      }));
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [stats.pelletsEaten, stats.currentMatchTime, gameState]);
+
   const hasClaimableMissions =
     missions.some((m) => m.completed && !m.claimed) ||
     achievements.some((a) => a.unlocked && !a.claimed);
@@ -396,103 +569,121 @@ export default function GameCanvas() {
       {/* 3D WebGL Canvas Container */}
       <div ref={mountRef} className="absolute inset-0 w-full h-full" />
 
-      {/* Modern HUD Overlay */}
-      <HUD
-        stats={stats}
-        gameState={gameState}
-        countdownSec={countdownSec}
-        onStartMatch={handleStartMatch}
-        isPaused={isPaused}
-        onTogglePause={togglePause}
-        onOpenTycoon={() => setIsTycoonOpen(true)}
-        onOpenSkins={() => setIsSkinsOpen(true)}
-        onOpenSpin={() => setIsSpinOpen(true)}
-        onOpenMissions={() => setIsMissionsOpen(true)}
-        onOpenStages={() => setIsStagesOpen(true)}
-        floatingTexts={floatingTexts}
-        radarData={radarData}
-        leaderboardData={leaderboardData}
-        killFeedData={killFeedData}
-        hasClaimableMissions={hasClaimableMissions}
-        onTeleportBossHunter={() => engineRef.current?.trigger11MinuteTeleport()}
-      />
+      {hasMounted && (
+        <>
+          {/* Modern HUD Overlay */}
+          <HUD
+            stats={stats}
+            gameState={gameState}
+            countdownSec={countdownSec}
+            onStartMatch={handleStartMatch}
+            isPaused={isPaused}
+            onTogglePause={togglePause}
+            onOpenTycoon={() => setIsTycoonOpen(true)}
+            onOpenSkins={() => setIsSkinsOpen(true)}
+            onOpenSpin={() => setIsSpinOpen(true)}
+            onOpenMissions={() => setIsMissionsOpen(true)}
+            onOpenStages={() => setIsStagesOpen(true)}
+            floatingTexts={floatingTexts}
+            radarData={radarData}
+            leaderboardData={leaderboardData}
+            killFeedData={killFeedData}
+            hasClaimableMissions={hasClaimableMissions}
+            onTeleportBossHunter={() => engineRef.current?.trigger11MinuteTeleport()}
+            lastMatchResults={lastMatchResults}
+            onExitToMenu={handleBackToMenu}
+          />
 
-      {/* Virtual Joystick for Touch / Mobile */}
-      {gameState === 'playing' && (
-        <VirtualJoystick
-          onMove={handleJoystickMove}
-          onBoostChange={handleBoostChange}
-          disabled={
-            isPaused ||
-            isTycoonOpen ||
-            isSkinsOpen ||
-            isStagesOpen ||
-            isSpinOpen ||
-            isMissionsOpen ||
-            matchResult.isGameOver
-          }
-        />
+          {/* Virtual Joystick for Touch / Mobile */}
+          {gameState === 'playing' && (
+            <VirtualJoystick
+              onMove={handleJoystickMove}
+              onBoostChange={handleBoostChange}
+              disabled={
+                isPaused ||
+                isTycoonOpen ||
+                isSkinsOpen ||
+                isStagesOpen ||
+                isSpinOpen ||
+                isMissionsOpen ||
+                matchResult.isGameOver
+              }
+            />
+          )}
+
+          {/* Modals */}
+          <TycoonModal
+            isOpen={isTycoonOpen}
+            onClose={() => setIsTycoonOpen(false)}
+            stats={stats}
+            onUpgrade={handleUpgrade}
+          />
+
+          <DailySpinModal
+            isOpen={isSpinOpen}
+            onClose={() => setIsSpinOpen(false)}
+            stats={stats}
+            onRewardClaimed={handleSpinReward}
+          />
+
+          <SkinsWardrobeModal
+            isOpen={isSkinsOpen}
+            onClose={() => setIsSkinsOpen(false)}
+            equippedSkinId={stats.equippedSkinId}
+            onEquipSkin={handleEquipSkin}
+            unlockedSkinIds={unlockedSkinIds}
+            onUnlockSkin={handleUnlockSkin}
+            coins={stats.totalPermanentCoins}
+            gems={stats.totalGems}
+            onDeductCoins={handleDeductCoins}
+            onDeductGems={handleDeductGems}
+            onAddCoins={handleAddCoins}
+            playerLevel={stats.level}
+            currentStageId={stats.currentStageId}
+          />
+
+          <StageSelectModal
+            isOpen={isStagesOpen}
+            onClose={() => setIsStagesOpen(false)}
+            currentStageId={stats.currentStageId}
+            onSelectStage={handleSelectStage}
+          />
+
+          <MissionsAchievementsModal
+            isOpen={isMissionsOpen}
+            onClose={() => setIsMissionsOpen(false)}
+            missions={missions}
+            achievements={achievements}
+            onClaimMission={handleClaimMission}
+            onClaimAchievement={handleClaimAchievement}
+          />
+
+          <GameOverModal
+            isOpen={gameState === 'gameover'}
+            isVictory={matchResult.isVictory}
+            stats={stats}
+            onPlayAgain={handlePlayAgain}
+            onOpenTycoon={() => setIsTycoonOpen(true)}
+            onOpenSpin={() => setIsSpinOpen(true)}
+            onBackToMenu={handleBackToMenu}
+            onNextStage={handleNextStage}
+          />
+
+          <MultiplayerModLobbyModal
+            isOpen={isMultiplayerOpen || isModsOpen}
+            onClose={() => {
+              setIsMultiplayerOpen(false);
+              setIsModsOpen(false);
+            }}
+            onStartMultiplayerMatch={(room) => {
+              setIsMultiplayerOpen(false);
+              setIsModsOpen(false);
+              handlePlayAgain();
+            }}
+            skinId={stats.equippedSkinId}
+          />
+        </>
       )}
-
-      {/* Collapsible Bottom Control Dock */}
-      {/* Dock removed for arcade simplicity */}
-
-      {/* Modals */}
-      <TycoonModal
-        isOpen={isTycoonOpen}
-        onClose={() => setIsTycoonOpen(false)}
-        stats={stats}
-        onUpgrade={handleUpgrade}
-      />
-
-      <DailySpinModal
-        isOpen={isSpinOpen}
-        onClose={() => setIsSpinOpen(false)}
-        stats={stats}
-        onRewardClaimed={handleSpinReward}
-      />
-
-      <SkinsWardrobeModal
-        isOpen={isSkinsOpen}
-        onClose={() => setIsSkinsOpen(false)}
-        equippedSkinId={stats.equippedSkinId}
-        onEquipSkin={handleEquipSkin}
-        unlockedSkinIds={unlockedSkinIds}
-        onUnlockSkin={handleUnlockSkin}
-        coins={stats.totalPermanentCoins}
-        gems={stats.totalGems}
-        onDeductCoins={handleDeductCoins}
-        onDeductGems={handleDeductGems}
-        onAddCoins={handleAddCoins}
-        playerLevel={stats.level}
-        currentStageId={stats.currentStageId}
-      />
-
-      <StageSelectModal
-        isOpen={isStagesOpen}
-        onClose={() => setIsStagesOpen(false)}
-        currentStageId={stats.currentStageId}
-        onSelectStage={handleSelectStage}
-      />
-
-      <MissionsAchievementsModal
-        isOpen={isMissionsOpen}
-        onClose={() => setIsMissionsOpen(false)}
-        missions={missions}
-        achievements={achievements}
-        onClaimMission={handleClaimMission}
-        onClaimAchievement={handleClaimAchievement}
-      />
-
-      <GameOverModal
-        isOpen={gameState === 'gameover'}
-        isVictory={matchResult.isVictory}
-        stats={stats}
-        onPlayAgain={handlePlayAgain}
-        onOpenTycoon={() => setIsTycoonOpen(true)}
-        onOpenSpin={() => setIsSpinOpen(true)}
-        onNextStage={handleNextStage}
-      />
     </div>
   );
 }

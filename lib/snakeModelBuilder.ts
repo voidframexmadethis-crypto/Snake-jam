@@ -118,6 +118,16 @@ export function buildSnakeProceduralHead(
     wR1.rotation.y = -0.2;
     group.add(wR1);
 
+    // Teeth for cat
+    const toothGeo = new THREE.ConeGeometry(0.04 * scale, 0.15 * scale, 4);
+    const toothMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const tL = new THREE.Mesh(toothGeo, toothMat);
+    tL.position.set(-0.15 * scale, 0.05 * scale, 0.9 * scale);
+    jawGroup.add(tL);
+    const tR = new THREE.Mesh(toothGeo, toothMat);
+    tR.position.set(0.15 * scale, 0.05 * scale, 0.9 * scale);
+    jawGroup.add(tR);
+
     // Playful small pink tongue
     const tongueGeo = new THREE.BoxGeometry(0.12 * scale, 0.04 * scale, 0.35 * scale);
     const tongueMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
@@ -209,6 +219,16 @@ export function buildSnakeProceduralHead(
     jawGroup.name = 'jawGroup';
     jawGroup.position.set(0, 0.25 * scale, 0.4 * scale);
 
+    // Dragon Fangs
+    const toothGeo = new THREE.ConeGeometry(0.08 * scale, 0.35 * scale, 4);
+    const toothMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    for (let i = -1; i <= 1; i += 2) {
+      const fang = new THREE.Mesh(toothGeo, toothMat);
+      fang.position.set(i * 0.3 * scale, 0.15 * scale, 1.2 * scale);
+      fang.rotation.x = -0.2;
+      jawGroup.add(fang);
+    }
+
     // Dragon Forked Tongue
     const tongueGeo = new THREE.BoxGeometry(0.14 * scale, 0.04 * scale, 0.8 * scale);
     const tongueMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
@@ -293,6 +313,15 @@ export function buildSnakeProceduralHead(
     tongue.position.set(0, 0.1 * scale, 1.3 * scale);
     jawGroup.add(tongue);
 
+    // Mechanical "teeth" (metal bars)
+    const toothGeo = new THREE.BoxGeometry(0.1 * scale, 0.1 * scale, 0.1 * scale);
+    const toothMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.8 });
+    for (let i = -2; i <= 2; i++) {
+      const bar = new THREE.Mesh(toothGeo, toothMat);
+      bar.position.set(i * 0.15 * scale, 0.05 * scale, 1.1 * scale);
+      jawGroup.add(bar);
+    }
+
     group.add(jawGroup);
   }
 
@@ -368,6 +397,15 @@ export function buildSnakeProceduralHead(
     tongue = new THREE.Mesh(tongueGeo, tongueMat);
     tongue.position.set(0, 0.05 * scale, 0.95 * scale);
     jawGroup.add(tongue);
+
+    // Cartoon teeth (white blocks)
+    const toothGeo = new THREE.BoxGeometry(0.15 * scale, 0.15 * scale, 0.05 * scale);
+    const toothMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    for (let i = -1; i <= 1; i++) {
+      const tooth = new THREE.Mesh(toothGeo, toothMat);
+      tooth.position.set(i * 0.2 * scale, 0.1 * scale, 0.85 * scale);
+      jawGroup.add(tooth);
+    }
 
     group.add(jawGroup);
   }
@@ -482,6 +520,15 @@ export function buildSnakeProceduralHead(
     tongue = new THREE.Mesh(tongueGeo, tongueMat);
     tongue.position.set(0, 0.02 * scale, 0.6 * scale);
     jawGroup.add(tongue);
+
+    // Classic teeth
+    const toothGeo = new THREE.BoxGeometry(0.12 * scale, 0.12 * scale, 0.1 * scale);
+    const toothMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    for (let i = -2; i <= 2; i++) {
+      const tooth = new THREE.Mesh(toothGeo, toothMat);
+      tooth.position.set(i * 0.18 * scale, 0.05 * scale, 0.55 * scale);
+      jawGroup.add(tooth);
+    }
 
     group.add(jawGroup);
 

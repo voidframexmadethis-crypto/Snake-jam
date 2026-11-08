@@ -10,7 +10,7 @@ import {
   ArrowRight,
   Crown,
 } from 'lucide-react';
-import { GameStats, STAGES } from '@/lib/gameTypes';
+import { GameStats, STAGES, TOTAL_ARENA_SNAKES } from '@/lib/gameTypes';
 
 interface GameOverModalProps {
   isOpen: boolean;
@@ -19,6 +19,7 @@ interface GameOverModalProps {
   onPlayAgain: () => void;
   onOpenTycoon: () => void;
   onOpenSpin: () => void;
+  onBackToMenu: () => void;
   onNextStage?: () => void;
 }
 
@@ -29,12 +30,21 @@ export default function GameOverModal({
   onPlayAgain,
   onOpenTycoon,
   onOpenSpin,
+  onBackToMenu,
   onNextStage,
 }: GameOverModalProps) {
   if (!isOpen) return null;
 
   const currentStage = STAGES.find((s) => s.id === stats.currentStageId) || STAGES[0];
   const hasNextStage = STAGES.some((s) => s.id === stats.currentStageId + 1);
+  const arenaRank = Math.max(
+    1,
+    Math.min(
+      TOTAL_ARENA_SNAKES,
+      TOTAL_ARENA_SNAKES -
+        (stats.score * 85 + stats.botsKilled * 350000 + Math.round(stats.currentLength * 1500))
+    )
+  );
 
   return (
     <div
@@ -65,60 +75,64 @@ export default function GameOverModal({
         <p className="text-xs text-slate-400 mt-0.5">
           {isVictory
             ? `${currentStage.bossName} was vanquished! Next arena unlocked!`
-            : 'Your snake fought hard in the 80-second battle royale arena.'}
+            : 'Your snake fought hard in the 12,000,000 player battle royale arena.'}
         </p>
 
         {/* Stats Grid */}
-        <div className="my-4 grid grid-cols-3 gap-2">
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">
-              Match Score
-            </span>
-            <div className="text-base font-black text-cyan-400">{stats.score}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">
-              Banked Coins
-            </span>
-            <div className="text-base font-black text-amber-400">
-              +${stats.cashEarnedThisMatch}
+        <div className="my-4 grid grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-left col-span-2 flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                Final Match Score
+              </span>
+              <div className="text-2xl font-black text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]">
+                {stats.score.toLocaleString()}
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">
+                Global Standing
+              </span>
+              <div className="text-base font-black text-cyan-300 font-mono">
+                #{arenaRank.toLocaleString()}
+              </div>
+              <span className="text-[9px] text-slate-500">out of 12,000,000</span>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">
-              Kills
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-950/20 p-3 text-left">
+            <span className="text-[10px] font-bold text-amber-400/80 uppercase">
+              Coins (This Round)
             </span>
-            <div className="text-base font-black text-emerald-400">
-              {stats.botsKilled}
+            <div className="text-lg font-black text-amber-400 flex items-center gap-1">
+              <Coins className="h-4 w-4" /> +{stats.cashEarnedThisMatch.toLocaleString()}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">
-              Pellets Eaten
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-left">
+            <span className="text-[10px] font-bold text-slate-500 uppercase">
+              Lifetime Total
             </span>
-            <div className="text-base font-black text-pink-400">
-              {stats.pelletsEaten}
+            <div className="text-lg font-black text-slate-300">
+              {stats.totalPermanentCoins.toLocaleString()}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">
-              Peak Level
+          <div className="rounded-2xl border border-cyan-500/20 bg-cyan-950/20 p-3 text-left">
+            <span className="text-[10px] font-bold text-cyan-400/80 uppercase">
+              Diamonds (This Round)
             </span>
-            <div className="text-base font-black text-purple-400">
-              LVL {stats.level}
+            <div className="text-lg font-black text-cyan-400 flex items-center gap-1">
+              <Sparkles className="h-4 w-4" /> +{stats.gemsEarnedThisMatch.toLocaleString()}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">
-              Peak Length
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-left">
+            <span className="text-[10px] font-bold text-slate-500 uppercase">
+              Total Diamonds
             </span>
-            <div className="text-base font-black text-cyan-300">
-              {stats.currentLength}m
+            <div className="text-lg font-black text-slate-300">
+              {stats.totalGems.toLocaleString()}
             </div>
           </div>
         </div>
@@ -139,10 +153,10 @@ export default function GameOverModal({
         <div className="space-y-2">
           <button
             onClick={onPlayAgain}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-500 to-emerald-500 py-3.5 text-sm font-black text-slate-950 shadow-lg shadow-cyan-500/20 hover:opacity-95 active:scale-95 transition"
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 via-green-400 to-teal-500 py-4 text-sm font-black text-slate-950 shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-95 transition-all border-2 border-emerald-300"
           >
-            <RotateCcw className="h-4 w-4" />
-            <span>PLAY AGAIN (80s ROUND)</span>
+            <RotateCcw className="h-5 w-5" />
+            <span>REVIVE & RESTART ARENA</span>
           </button>
 
           <div className="grid grid-cols-2 gap-2">
@@ -162,6 +176,14 @@ export default function GameOverModal({
               <span>Free Spin</span>
             </button>
           </div>
+
+          <button
+            onClick={onBackToMenu}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-slate-700 bg-slate-800/90 py-3 text-sm font-black text-slate-200 hover:bg-slate-700 hover:text-white transition shadow-md mt-2"
+          >
+            <RotateCcw className="h-4 w-4 text-cyan-400" />
+            <span>BACK TO MAIN MENU</span>
+          </button>
         </div>
       </div>
     </div>

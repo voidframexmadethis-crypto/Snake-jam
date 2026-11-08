@@ -22,9 +22,22 @@ export default function DailySpinModal({
   const [isSpinning, setIsSpinning] = useState(false);
   const [currentRotation, setCurrentRotation] = useState(0);
   const [wonReward, setWonReward] = useState<DailySpinReward | null>(null);
+  const [timer, setTimer] = useState(5);
 
   const numSegments = DAILY_SPIN_REWARDS.length;
   const segmentAngle = (Math.PI * 2) / numSegments;
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isOpen && timer > 0) {
+      interval = setInterval(() => {
+        setTimer((prev) => prev - 1);
+      }, 1000);
+    } else if (timer === 0 && isOpen) {
+      onClose();
+    }
+    return () => clearInterval(interval);
+  }, [isOpen, timer, onClose]);
 
   // Draw Roulette Wheel
   const drawWheel = React.useCallback((rotation: number) => {
@@ -172,6 +185,9 @@ export default function DailySpinModal({
           <h2 className="text-xl font-black text-slate-100 tracking-wide">
             DAILY LUCKY SPIN
           </h2>
+        </div>
+        <div className="text-sm font-bold text-slate-300 mb-2">
+          Closes in: <span className="text-amber-400">{timer}s</span>
         </div>
         <p className="text-xs text-slate-400 mb-4">
           Free daily rewards! Spin to win coins, rare skins, and powerups.
