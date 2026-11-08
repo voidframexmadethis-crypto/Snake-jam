@@ -63,11 +63,33 @@ export interface PelletData {
 
 export interface PowerUpItem {
   id: number;
-  type: 'magnet' | 'speed' | 'shield';
+  type: 'magnet' | 'speed' | 'shield' | 'fire';
   x: number;
   z: number;
   group: THREE.Group;
   active: boolean;
+}
+
+export type ParticleType = 'confetti' | 'spark' | 'smoke';
+
+export interface ParticleData {
+  mesh: THREE.Mesh;
+  vx: number;
+  vy: number;
+  vz: number;
+  vrx: number;
+  vry: number;
+  vrz: number;
+  life: number;
+  maxLife: number;
+  type: ParticleType;
+}
+
+export interface KillFeedEntry {
+  id: string;
+  text: string;
+  color: string;
+  time: number;
 }
 
 export interface UpgradePadData {
@@ -115,7 +137,19 @@ export interface SnakeEntity {
   aiState?: 'forage' | 'hunt' | 'flee';
   aiTarget?: { x: number; z: number };
   aiTimer?: number;
+  respawnTimer?: number;
   shieldActive?: boolean;
+  jawAngle?: number;
+  targetJawAngle?: number;
+}
+
+export interface ChestData {
+  id: string;
+  x: number;
+  z: number;
+  meshGroup: THREE.Group;
+  active: boolean;
+  type: 'wood' | 'gold';
 }
 
 // Reusable math vectors for zero GC in game loop
@@ -145,6 +179,7 @@ export class ThreeGameEngine {
   private player!: SnakeEntity;
   private bots: SnakeEntity[] = [];
   private boss: SnakeEntity | null = null;
+  private bossPatrolAngle: number = 0;
   private pellets: PelletData[] = [];
   private pelletInstancedMesh!: THREE.InstancedMesh;
   private gates: GateData[] = [];
@@ -154,15 +189,41 @@ export class ThreeGameEngine {
   private obstacles: ObstacleData[] = [];
   private obstacleGroup!: THREE.Group;
   private shieldBubbleMesh!: THREE.Mesh;
+  private particles: ParticleData[] = [];
+  private particlePool: ParticleData[] = [];
+  private sharedConfettiGeo = new THREE.BoxGeometry(0.4, 0.1, 0.2);
+  private sharedSparkGeo = new THREE.SphereGeometry(0.15, 8, 8);
+  private coinSegmentPool: THREE.Mesh[] = [];
+  private sharedCoinGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.15, 16);
+  private sharedCoinMat = new THREE.MeshStandardMaterial({
+    color: 0xffd700,
+    metalness: 1.0,
+    roughness: 0.1,
+    emissive: 0x443300,
+    emissiveIntensity: 0.2,
+  });
+  private pelletGrid: number[][] = []; // indices into this.pellets
+  private readonly gridSize: number = 40;
+  private readonly gridDim: number = Math.ceil(2500 / 40); // arenaSize / gridSize
+  private snakeCoins: SnakeEntity[] = [];
+  private chests: ChestData[] = [];
+  public shakeIntensity: number = 0;
+  private pelletCombo: number = 0;
+  private pelletComboTimer: number = 0;
+  public killFeed: KillFeedEntry[] = [];
 
   // Arena & Match State
   public matchTimeRemaining: number = MATCH_DURATION_SECONDS;
-  public arenaRadius: number = 90;
-  public currentShrinkRadius: number = 90;
-  public minShrinkRadius: number = 28;
+  public arenaSize: number = 2500;
   public isPaused: boolean = false;
   public isGameOver: boolean = false;
   public isVictory: boolean = false;
+
+  // Timer & Teleport Settings (PlayerBossHunter)
+  public matchTimer: number = 0;
+  public teleportUnlockTime: number = 660; // Exactly 11 minutes (11 * 60 seconds)
+  public hasTeleportedToPerimeter: boolean = false;
+  public canEatBoss: boolean = false;
 
   // Controls & Inputs
   public inputVector: { x: number; y: number } = { x: 0, y: 0 };
@@ -223,7 +284,7 @@ export class ThreeGameEngine {
     this.renderer.setPixelRatio(
       this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2)
     );
-    this.renderer.shadowMap.enabled = !this.isSoftwareGl;
+    this.renderer.shadowMap.enabled = false;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(this.renderer.domElement);
@@ -255,18 +316,16 @@ export class ThreeGameEngine {
     this.buildPellets();
     this.buildGates();
     this.buildPowerups();
-    this.buildDropOffZone();
-    this.buildUpgradePads();
+    this.buildObstacles(currentStage);
 
     // 7. Spawn Player & Bots
     this.spawnPlayer();
-    this.spawnBots(6);
+    this.spawnBots(28);
 
     // 8. Bind Input Listeners
     this.bindInputs();
 
     // 9. Start Main Loop
-    this.tick = this.tick.bind(this);
     this.frameId = requestAnimationFrame(this.tick);
   }
 
@@ -283,20 +342,7 @@ export class ThreeGameEngine {
 
     this.dirLight = new THREE.DirectionalLight(0xfff7ed, 1.8);
     this.dirLight.position.set(40, 60, 30);
-    if (!this.isSoftwareGl) {
-      this.dirLight.castShadow = true;
-      this.dirLight.shadow.mapSize.width = 1024;
-      this.dirLight.shadow.mapSize.height = 1024;
-      this.dirLight.shadow.camera.near = 10;
-      this.dirLight.shadow.camera.far = 160;
-      const d = 60;
-      this.dirLight.shadow.camera.left = -d;
-      this.dirLight.shadow.camera.right = d;
-      this.dirLight.shadow.camera.top = d;
-      this.dirLight.shadow.camera.bottom = -d;
-      this.dirLight.shadow.bias = -0.0005;
-      this.dirLight.shadow.normalBias = 0.02;
-    }
+    this.dirLight.castShadow = false;
     this.scene.add(this.dirLight);
   }
 
@@ -337,7 +383,7 @@ export class ThreeGameEngine {
     floorTexture.repeat.set(16, 16);
     floorTexture.colorSpace = THREE.SRGBColorSpace;
 
-    const floorGeo = new THREE.PlaneGeometry(240, 240);
+    const floorGeo = new THREE.PlaneGeometry(this.arenaSize, this.arenaSize);
     const floorMat = new THREE.MeshStandardMaterial({
       map: floorTexture,
       roughness: 0.8,
@@ -347,26 +393,6 @@ export class ThreeGameEngine {
     this.groundMesh.rotation.x = -Math.PI / 2;
     this.groundMesh.receiveShadow = !this.isSoftwareGl;
     this.scene.add(this.groundMesh);
-
-    // Shrinking Danger Ring Barrier (Force Field)
-    const ringGeo = new THREE.CylinderGeometry(
-      this.arenaRadius,
-      this.arenaRadius,
-      12,
-      64,
-      1,
-      true
-    );
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xef4444,
-      transparent: true,
-      opacity: 0.25,
-      side: THREE.DoubleSide,
-      wireframe: true,
-    });
-    this.ringBarrierMesh = new THREE.Mesh(ringGeo, ringMat);
-    this.ringBarrierMesh.position.y = 6;
-    this.scene.add(this.ringBarrierMesh);
 
     // Outer Mountain / Rock Outcrops Perimeter (Zero-pill natural barrier)
     const rockGeo = new THREE.DodecahedronGeometry(5, 1);
@@ -378,7 +404,7 @@ export class ThreeGameEngine {
     const rockCount = 48;
     for (let i = 0; i < rockCount; i++) {
       const angle = (i / rockCount) * Math.PI * 2;
-      const dist = this.arenaRadius + 6 + (Math.sin(i * 3.7) * 4);
+      const dist = (this.arenaSize / 2) + 6 + (Math.sin(i * 3.7) * 4);
       const rock = new THREE.Mesh(rockGeo, rockMat);
       rock.position.set(Math.cos(angle) * dist, 2.5, Math.sin(angle) * dist);
       rock.scale.set(
@@ -397,15 +423,15 @@ export class ThreeGameEngine {
   // PELLETS & CONSUMABLES
   // ==========================================
   private buildPellets() {
-    const count = 300;
-    const sphereGeo = new THREE.SphereGeometry(0.35, 12, 12);
+    const count = 100000;
+    const pelletGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
     const pelletMat = new THREE.MeshStandardMaterial({
       roughness: 0.3,
       metalness: 0.4,
       emissive: 0x111111,
     });
 
-    this.pelletInstancedMesh = new THREE.InstancedMesh(sphereGeo, pelletMat, count);
+    this.pelletInstancedMesh = new THREE.InstancedMesh(pelletGeo, pelletMat, count);
     this.pelletInstancedMesh.castShadow = !this.isSoftwareGl;
     this.pelletInstancedMesh.receiveShadow = !this.isSoftwareGl;
 
@@ -418,9 +444,12 @@ export class ThreeGameEngine {
       new THREE.Color(0x3b82f6), // Blue
     ];
 
+    // Initialize Spatial Grid
+    this.pelletGrid = Array.from({ length: this.gridDim * this.gridDim }, () => []);
+
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const r = Math.sqrt(Math.random()) * (this.arenaRadius - 8);
+      const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 8);
       const x = Math.cos(angle) * r;
       const z = Math.sin(angle) * r;
       const color = palette[Math.floor(Math.random() * palette.length)];
@@ -438,6 +467,31 @@ export class ThreeGameEngine {
         meshIndex: i,
         active: true,
       });
+
+      // Add to grid
+      const gx = Math.floor((x + 1250) / this.gridSize);
+      const gz = Math.floor((z + 1250) / this.gridSize);
+      const gIdx = gz * this.gridDim + gx;
+      if (this.pelletGrid[gIdx]) {
+        this.pelletGrid[gIdx].push(i);
+      }
+    }
+
+    // Pre-populate particle pool (Zero Allocation)
+    for (let i = 0; i < 800; i++) {
+      const type: ParticleType = i < 400 ? 'confetti' : 'spark';
+      const geo = type === 'confetti' ? this.sharedConfettiGeo : this.sharedSparkGeo;
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      this.scene.add(mesh);
+      this.particlePool.push({
+        mesh,
+        vx: 0, vy: 0, vz: 0,
+        vrx: 0, vry: 0, vrz: 0,
+        life: 0, maxLife: 0,
+        type
+      });
     }
 
     if (this.pelletInstancedMesh.instanceColor) {
@@ -445,18 +499,42 @@ export class ThreeGameEngine {
     }
     this.pelletInstancedMesh.instanceMatrix.needsUpdate = true;
     this.scene.add(this.pelletInstancedMesh);
+
+    // Pre-populate Coin Segment Pool (Zero Allocation)
+    this.sharedCoinGeo.rotateX(Math.PI / 2);
+    for (let i = 0; i < 200; i++) {
+      const mesh = new THREE.Mesh(this.sharedCoinGeo, this.sharedCoinMat);
+      mesh.visible = false;
+      this.scene.add(mesh);
+      this.coinSegmentPool.push(mesh);
+    }
   }
 
   private respawnPellet(p: PelletData) {
+    // Remove from old grid cell
+    const oldGx = Math.floor((p.x + 1250) / this.gridSize);
+    const oldGz = Math.floor((p.z + 1250) / this.gridSize);
+    const oldGIdx = oldGz * this.gridDim + oldGx;
+    if (this.pelletGrid[oldGIdx]) {
+      this.pelletGrid[oldGIdx] = this.pelletGrid[oldGIdx].filter(idx => idx !== p.meshIndex);
+    }
+
     const angle = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(Math.random()) * (this.currentShrinkRadius - 5);
+    const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 5);
     p.x = Math.cos(angle) * r;
     p.z = Math.sin(angle) * r;
     p.active = true;
 
+    // Add to new grid cell
+    const gx = Math.floor((p.x + 1250) / this.gridSize);
+    const gz = Math.floor((p.z + 1250) / this.gridSize);
+    const gIdx = gz * this.gridDim + gx;
+    if (this.pelletGrid[gIdx]) {
+      this.pelletGrid[gIdx].push(p.meshIndex);
+    }
+
     _mat4.makeTranslation(p.x, 0.45, p.z);
     this.pelletInstancedMesh.setMatrixAt(p.meshIndex, _mat4);
-    this.pelletInstancedMesh.instanceMatrix.needsUpdate = true;
   }
 
   // ==========================================
@@ -569,45 +647,103 @@ export class ThreeGameEngine {
   // POWER-UPS (FREE PICKUPS)
   // ==========================================
   private buildPowerups() {
-    const types: ('magnet' | 'speed' | 'shield')[] = [
+    const types: ('magnet' | 'speed' | 'shield' | 'fire')[] = [
       'magnet',
       'speed',
       'shield',
+      'fire',
       'magnet',
       'speed',
+      'shield',
+      'fire',
     ];
     types.forEach((type, i) => {
       const group = new THREE.Group();
-      const angle = (i / types.length) * Math.PI * 2 + 0.5;
-      const r = 25 + Math.random() * 25;
-      const x = Math.cos(angle) * r;
-      const z = Math.sin(angle) * r;
+      const halfSize = this.arenaSize / 2 - 10;
+      const x = (Math.random() - 0.5) * halfSize * 2;
+      const z = (Math.random() - 0.5) * halfSize * 2;
       group.position.set(x, 1.2, z);
 
       let color = 0x3b82f6; // Magnet blue
       if (type === 'speed') color = 0x06b6d4; // Speed cyan
       if (type === 'shield') color = 0xf59e0b; // Shield gold
+      if (type === 'fire') color = 0xef4444; // Fire red
 
-      // 3-part Powerup Icon
-      // 1. Core Gem / Octahedron
-      const geo = new THREE.OctahedronGeometry(1.0, 0);
-      const mat = new THREE.MeshStandardMaterial({
-        color,
-        emissive: color,
-        emissiveIntensity: 0.7,
-        metalness: 0.9,
-        roughness: 0.1,
-      });
-      const core = new THREE.Mesh(geo, mat);
-      core.castShadow = !this.isSoftwareGl;
-      group.add(core);
+      if (type === 'magnet') {
+        // ... (Keep existing magnet code)
+        const magnetGeo = new THREE.TorusGeometry(0.9, 0.25, 12, 24, Math.PI * 1.3);
+        const magnetMat = new THREE.MeshStandardMaterial({
+          color: 0x2563eb,
+          emissive: 0x3b82f6,
+          emissiveIntensity: 0.8,
+          metalness: 0.8,
+        });
+        const magnetMesh = new THREE.Mesh(magnetGeo, magnetMat);
+        magnetMesh.rotation.x = Math.PI / 2;
+        group.add(magnetMesh);
 
-      // 2. Rotating Halo Ring
-      const ringGeo = new THREE.TorusGeometry(1.6, 0.1, 8, 24);
-      const ringMat = new THREE.MeshBasicMaterial({ color, wireframe: true });
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = Math.PI / 2;
-      group.add(ring);
+        const tipGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.4, 12);
+        const tipMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, roughness: 0.1 });
+        const tipL = new THREE.Mesh(tipGeo, tipMat);
+        tipL.position.set(-0.85, 0, -0.4);
+        group.add(tipL);
+
+        const tipR = new THREE.Mesh(tipGeo, tipMat);
+        tipR.position.set(0.85, 0, -0.4);
+        group.add(tipR);
+      } else if (type === 'speed') {
+        // Lightning bolt prism
+        const shape = new THREE.Shape();
+        shape.moveTo(-0.2, 1.2);
+        shape.lineTo(0.5, 0.2);
+        shape.lineTo(0.1, 0.2);
+        shape.lineTo(0.6, -1.2);
+        shape.lineTo(-0.2, -0.2);
+        shape.lineTo(0.2, -0.2);
+        shape.closePath();
+
+        const extrudeSettings = { depth: 0.3, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.05, bevelThickness: 0.05 };
+        const boltGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const boltMat = new THREE.MeshStandardMaterial({
+          color: 0x06b6d4,
+          emissive: 0x22d3ee,
+          emissiveIntensity: 0.9,
+          metalness: 0.8,
+        });
+        const boltMesh = new THREE.Mesh(boltGeo, boltMat);
+        boltMesh.rotation.x = Math.PI / 2;
+        boltMesh.scale.set(0.8, 0.8, 0.8);
+        group.add(boltMesh);
+      } else if (type === 'shield') {
+        // Shield / Ghost barrier sphere with surrounding ring
+        const sphereGeo = new THREE.SphereGeometry(1.0, 16, 16);
+        const sphereMat = new THREE.MeshStandardMaterial({
+          color: 0xf59e0b,
+          emissive: 0xfacc15,
+          emissiveIntensity: 0.8,
+          transparent: true,
+          opacity: 0.8,
+          metalness: 0.5,
+        });
+        const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+        group.add(sphereMesh);
+
+        const haloGeo = new THREE.TorusGeometry(1.5, 0.12, 12, 24);
+        const haloMat = new THREE.MeshBasicMaterial({ color: 0xfef08a, wireframe: true });
+        const haloMesh = new THREE.Mesh(haloGeo, haloMat);
+        haloMesh.rotation.x = Math.PI / 2;
+        group.add(haloMesh);
+      } else if (type === 'fire') {
+        // Fire icon (flame shape)
+        const flameGeo = new THREE.ConeGeometry(0.8, 1.5, 12);
+        const flameMat = new THREE.MeshStandardMaterial({
+          color: 0xef4444,
+          emissive: 0xf97316,
+          emissiveIntensity: 0.9,
+        });
+        const flame = new THREE.Mesh(flameGeo, flameMat);
+        group.add(flame);
+      }
 
       this.scene.add(group);
       this.powerups.push({
@@ -621,140 +757,84 @@ export class ThreeGameEngine {
     });
   }
 
-  // ==========================================
-  // DROP-OFF BASE ZONE (CASH-IN)
-  // ==========================================
-  private buildDropOffZone() {
-    this.dropOffZoneGroup = new THREE.Group();
-    this.dropOffZoneGroup.position.set(0, 0.05, 0); // Center safe zone
 
-    // Outer Glowing Ring Pad
-    const padGeo = new THREE.RingGeometry(0.1, 7.5, 48);
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, 256, 256);
-    ctx.strokeStyle = '#eab308';
-    ctx.lineWidth = 12;
-    ctx.beginPath();
-    ctx.arc(128, 128, 116, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.fillStyle = '#facc15';
-    ctx.font = 'bold 36px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('DROP-OFF', 128, 100);
-    ctx.fillText('BANK', 128, 160);
-
-    const padTex = new THREE.CanvasTexture(canvas);
-    padTex.colorSpace = THREE.SRGBColorSpace;
-
-    const padMat = new THREE.MeshBasicMaterial({
-      map: padTex,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.85,
-    });
-    const padMesh = new THREE.Mesh(padGeo, padMat);
-    padMesh.rotation.x = -Math.PI / 2;
-    this.dropOffZoneGroup.add(padMesh);
-
-    // Floating 3D Holographic Coin
-    const coinGeo = new THREE.CylinderGeometry(1.8, 1.8, 0.35, 24);
-    const coinMat = new THREE.MeshStandardMaterial({
-      color: 0xfacc15,
-      metalness: 0.9,
-      roughness: 0.2,
-      emissive: 0xca8a04,
-      emissiveIntensity: 0.4,
-    });
-    const coinMesh = new THREE.Mesh(coinGeo, coinMat);
-    coinMesh.position.set(0, 4.5, 0);
-    coinMesh.rotation.x = Math.PI / 2;
-    this.dropOffZoneGroup.add(coinMesh);
-
-    this.scene.add(this.dropOffZoneGroup);
-  }
 
   // ==========================================
-  // IN-WORLD UPGRADE PADS (TYCOON LOOP)
+  // ARENA OBSTACLES & HAZARDS (BIOME STAGES)
   // ==========================================
-  private buildUpgradePads() {
-    const padConfigs: {
-      type: 'speed' | 'startLength' | 'income' | 'magnet';
-      label: string;
-      x: number;
-      z: number;
-      color: number;
-    }[] = [
-      { type: 'speed', label: 'SPEED', x: -14, z: -14, color: 0x06b6d4 },
-      { type: 'startLength', label: 'LENGTH', x: 14, z: -14, color: 0x10b981 },
-      { type: 'income', label: 'INCOME', x: -14, z: 14, color: 0xf59e0b },
-      { type: 'magnet', label: 'MAGNET', x: 14, z: 14, color: 0xa855f7 },
+  private buildObstacles(stage: StageDefinition) {
+    this.obstacleGroup = new THREE.Group();
+    this.scene.add(this.obstacleGroup);
+
+    const obstacleConfigs: { x: number; z: number; type: 'pillar' | 'crystal' | 'boulder'; scale: number }[] = [
+      { x: -25, z: -25, type: 'pillar', scale: 1.2 },
+      { x: 25, z: -25, type: 'crystal', scale: 1.5 },
+      { x: -25, z: 25, type: 'boulder', scale: 1.4 },
+      { x: 25, z: 25, type: 'pillar', scale: 1.3 },
+      { x: 0, z: -40, type: 'crystal', scale: 1.6 },
+      { x: -40, z: 0, type: 'boulder', scale: 1.5 },
+      { x: 40, z: 0, type: 'pillar', scale: 1.4 },
+      { x: 0, z: 40, type: 'crystal', scale: 1.3 },
     ];
 
-    padConfigs.forEach((conf) => {
-      const group = new THREE.Group();
-      group.position.set(conf.x, 0.06, conf.z);
+    obstacleConfigs.forEach((conf, idx) => {
+      const radius = 2.2 * conf.scale;
+      const height = 6.0 * conf.scale;
+      const meshGroup = new THREE.Group();
+      meshGroup.position.set(conf.x, 0, conf.z);
 
-      // Floor disc
-      const discGeo = new THREE.CircleGeometry(3.5, 32);
-      const discMat = new THREE.MeshBasicMaterial({
-        color: conf.color,
-        transparent: true,
-        opacity: 0.45,
-        side: THREE.DoubleSide,
-      });
-      const disc = new THREE.Mesh(discGeo, discMat);
-      disc.rotation.x = -Math.PI / 2;
-      group.add(disc);
+      if (conf.type === 'pillar') {
+        const geo = new THREE.CylinderGeometry(radius * 0.8, radius, height, 16);
+        const mat = new THREE.MeshStandardMaterial({
+          color: stage.gridColor,
+          roughness: 0.4,
+          metalness: 0.8,
+          emissive: stage.skyTint,
+          emissiveIntensity: 0.25,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = height / 2;
+        mesh.castShadow = !this.isSoftwareGl;
+        mesh.receiveShadow = !this.isSoftwareGl;
+        meshGroup.add(mesh);
+      } else if (conf.type === 'crystal') {
+        const geo = new THREE.OctahedronGeometry(radius * 1.5, 0);
+        const mat = new THREE.MeshStandardMaterial({
+          color: stage.skyTint,
+          roughness: 0.2,
+          metalness: 0.9,
+          emissive: stage.skyTint,
+          emissiveIntensity: 0.6,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = height * 0.5;
+        mesh.rotation.y = Math.PI / 4;
+        mesh.castShadow = !this.isSoftwareGl;
+        meshGroup.add(mesh);
+      } else {
+        const geo = new THREE.DodecahedronGeometry(radius * 1.3, 1);
+        const mat = new THREE.MeshStandardMaterial({
+          color: stage.terrainColor,
+          roughness: 0.9,
+          metalness: 0.1,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = height * 0.4;
+        mesh.castShadow = !this.isSoftwareGl;
+        mesh.receiveShadow = !this.isSoftwareGl;
+        meshGroup.add(mesh);
+      }
 
-      // Ring border
-      const ringGeo = new THREE.RingGeometry(3.2, 3.6, 32);
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: conf.color,
-        side: THREE.DoubleSide,
-      });
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = -Math.PI / 2;
-      group.add(ring);
+      this.obstacleGroup.add(meshGroup);
 
-      // 3D Pedestal Icon
-      const pedGeo = new THREE.CylinderGeometry(0.6, 0.9, 1.4, 16);
-      const pedMat = new THREE.MeshStandardMaterial({
-        color: 0x1e293b,
-        roughness: 0.4,
-        metalness: 0.8,
-      });
-      const ped = new THREE.Mesh(pedGeo, pedMat);
-      ped.position.set(0, 0.7, 0);
-      group.add(ped);
-
-      // Floating Orb on Pedestal
-      const orbGeo = new THREE.DodecahedronGeometry(0.5, 1);
-      const orbMat = new THREE.MeshStandardMaterial({
-        color: conf.color,
-        emissive: conf.color,
-        emissiveIntensity: 0.8,
-        metalness: 0.9,
-      });
-      const orb = new THREE.Mesh(orbGeo, orbMat);
-      orb.position.set(0, 1.8, 0);
-      group.add(orb);
-
-      this.scene.add(group);
-
-      this.upgradePads.push({
-        type: conf.type,
-        label: conf.label,
+      this.obstacles.push({
+        id: idx,
         x: conf.x,
         z: conf.z,
-        radius: 3.5,
-        color: conf.color,
-        group,
-        charging: 0,
+        radius,
+        height,
+        type: conf.type,
+        color: 0xffffff,
       });
     });
   }
@@ -853,6 +933,18 @@ export class ThreeGameEngine {
       history: [],
     };
 
+    // Shield Bubble Mesh
+    const shieldGeo = new THREE.SphereGeometry(2.2, 24, 24);
+    const shieldMat = new THREE.MeshBasicMaterial({
+      color: 0xfbbf24,
+      transparent: true,
+      opacity: 0.4,
+      wireframe: true,
+    });
+    this.shieldBubbleMesh = new THREE.Mesh(shieldGeo, shieldMat);
+    this.shieldBubbleMesh.visible = false;
+    this.player.headGroup.add(this.shieldBubbleMesh);
+
     // Pre-populate history
     for (let i = 0; i < 200; i++) {
       this.player.history.push({
@@ -862,8 +954,9 @@ export class ThreeGameEngine {
       });
     }
 
-    // Build initial tail segments
-    for (let i = 0; i < initialLen; i++) {
+    // Build pre-allocated segment pool (Zero Allocation Object Pooling)
+    const maxPoolSize = 150;
+    for (let i = 0; i < maxPoolSize; i++) {
       const segMesh = this.createSegmentMesh(
         equippedSkin.primaryColor,
         equippedSkin.secondaryColor,
@@ -872,6 +965,7 @@ export class ThreeGameEngine {
         modelType,
         false
       );
+      segMesh.visible = i < initialLen;
       this.scene.add(segMesh);
       this.player.segments.push({
         mesh: segMesh,
@@ -889,14 +983,50 @@ export class ThreeGameEngine {
       'QuantumWorm',
       'ShadowPython',
       'SolarDrake',
+      'ApexTitan',
+      'FrostBite',
+      'MagmaWyrm',
+      'PhantomStrike',
+      'VoltEel',
+      'YetiRider',
+      'CoasterRacer',
+      'SharkFin',
+      'SnowGlide',
+      'EmeraldFang',
+      'HyperVenom',
+      'AstralSerpent',
+      'InfernoCobra',
+      'ThunderScale',
+      'RogueBasilisk',
+      'CosmicDragon',
+      'GlacialHydra',
+      'AbyssCrawler',
+      'OmegaStalker',
+      'GoldenPython',
+      'IronViper',
+      'BlazeStriker',
+      'TitanWorm',
+      'ToxicDart',
+      'StormRuler',
+      'VelocityDrake',
     ];
     const botSkins = [
-      { p: '#06b6d4', s: '#0284c7', g: '#38bdf8' },
-      { p: '#f97316', s: '#c2410c', g: '#fbbf24' },
-      { p: '#a855f7', s: '#7e22ce', g: '#c084fc' },
-      { p: '#ec4899', s: '#be185d', g: '#f472b6' },
-      { p: '#3b82f6', s: '#1d4ed8', g: '#60a5fa' },
-      { p: '#eab308', s: '#ca8a04', g: '#fde047' },
+      { p: '#06b6d4', s: '#0284c7', g: '#38bdf8' }, // Cyan Neon
+      { p: '#f97316', s: '#c2410c', g: '#fbbf24' }, // Orange Fire
+      { p: '#a855f7', s: '#7e22ce', g: '#c084fc' }, // Violet Arc
+      { p: '#ec4899', s: '#be185d', g: '#f472b6' }, // Pink Pulse
+      { p: '#3b82f6', s: '#1d4ed8', g: '#60a5fa' }, // Cobalt Blue
+      { p: '#eab308', s: '#ca8a04', g: '#fde047' }, // Electric Gold
+      { p: '#10b981', s: '#047857', g: '#34d399' }, // Emerald Viper
+      { p: '#ef4444', s: '#b91c1c', g: '#f87171' }, // Crimson Blood
+      { p: '#8b5cf6', s: '#6d28d9', g: '#a78bfa' }, // Deep Purple
+      { p: '#14b8a6', s: '#0f766e', g: '#2dd4bf' }, // Aqua Marine
+      { p: '#f43f5e', s: '#be123c', g: '#fb7185' }, // Rose Shock
+      { p: '#84cc16', s: '#4d7c0f', g: '#a3e635' }, // Acid Lime
+      { p: '#6366f1', s: '#4338ca', g: '#818cf8' }, // Indigo Night
+      { p: '#d946ef', s: '#a21caf', g: '#f0abfc' }, // Fuchsia Wave
+      { p: '#0ea5e9', s: '#0369a1', g: '#7dd3fc' }, // Sky Glider
+      { p: '#f59e0b', s: '#b45309', g: '#fcd34d' }, // Amber Blaze
     ];
     const botModelTypes: SkinModelType[] = [
       'robot',
@@ -905,14 +1035,28 @@ export class ThreeGameEngine {
       'food',
       'celestial',
       'classic',
+      'roller_coaster',
+      'shark',
+      'electric_eel',
+      'snowman',
+      'yeti',
     ];
 
     for (let i = 0; i < count; i++) {
       const skin = botSkins[i % botSkins.length];
       const name = botNames[i % botNames.length];
       const modelType = botModelTypes[i % botModelTypes.length];
-      const angle = (i / count) * Math.PI * 2 + 0.3;
-      const dist = 30 + Math.random() * 25;
+      
+      // Dynamic radial distribution: close rivals, mid-field foragers, outer-ring snakes
+      const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+      let dist: number;
+      if (i < 8) {
+        dist = 25 + Math.random() * 40;
+      } else if (i < 20) {
+        dist = 70 + Math.random() * 120;
+      } else {
+        dist = 200 + Math.random() * 250;
+      }
       const x = Math.cos(angle) * dist;
       const z = Math.sin(angle) * dist;
 
@@ -953,13 +1097,16 @@ export class ThreeGameEngine {
         history: [],
         aiState: 'forage',
         aiTimer: Math.random() * 3,
+        respawnTimer: 0,
       };
 
       for (let h = 0; h < 200; h++) {
         bot.history.push({ x: bot.x, z: bot.z, heading: bot.heading });
       }
 
-      for (let s = 0; s < botLength; s++) {
+      // 40 meshes per bot pool ensures ultra-smooth 80 FPS rendering
+      const maxPoolSize = 40;
+      for (let s = 0; s < maxPoolSize; s++) {
         const segMesh = this.createSegmentMesh(
           skin.p,
           skin.s,
@@ -968,6 +1115,7 @@ export class ThreeGameEngine {
           modelType,
           false
         );
+        segMesh.visible = s < botLength;
         this.scene.add(segMesh);
         bot.segments.push({
           mesh: segMesh,
@@ -980,6 +1128,43 @@ export class ThreeGameEngine {
     }
   }
 
+  private respawnBot(bot: SnakeEntity) {
+    bot.alive = true;
+    bot.respawnTimer = 0;
+
+    // Respawn around player at safe distance
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 35 + Math.random() * 110;
+    bot.x = Math.max(-1000, Math.min(1000, this.player.x + Math.cos(angle) * dist));
+    bot.z = Math.max(-1000, Math.min(1000, this.player.z + Math.sin(angle) * dist));
+    bot.heading = Math.random() * Math.PI * 2;
+
+    const botLength = 6 + Math.floor(Math.random() * 8);
+    bot.length = botLength;
+    bot.targetLength = botLength;
+    bot.hp = 60;
+    bot.maxHp = 60;
+    bot.aiState = 'forage';
+    bot.aiTimer = 1.0 + Math.random() * 2;
+
+    bot.headGroup.position.set(bot.x, 0, bot.z);
+    bot.headGroup.rotation.y = -bot.heading + Math.PI / 2;
+    bot.headGroup.visible = true;
+    this.scene.add(bot.headGroup);
+
+    bot.history = [];
+    for (let h = 0; h < 200; h++) {
+      bot.history.push({ x: bot.x, z: bot.z, heading: bot.heading });
+    }
+
+    bot.segments.forEach((seg, s) => {
+      seg.mesh.visible = s < botLength;
+      seg.position.set(bot.x, 0.45, bot.z);
+      seg.mesh.position.set(bot.x, 0.45, bot.z);
+      seg.mesh.rotation.y = -bot.heading + Math.PI / 2;
+    });
+  }
+
   // ==========================================
   // STAGE BOSS SPAWN (STAGE PROGRESSION)
   // ==========================================
@@ -988,9 +1173,10 @@ export class ThreeGameEngine {
     const stage = STAGES.find((s) => s.id === this.stats.currentStageId) || STAGES[0];
 
     soundManager.playBossAlert();
+    this.triggerScreenShake(1.6);
     this.onFloatingText({
       id: Math.random().toString(),
-      text: `⚠️ WARNING: ${stage.bossName} SPAWNED!`,
+      text: `⚠️ STAGE COMPLETE! ${stage.bossName} ENTERED THE ARENA!`,
       color: '#ef4444',
       x: window.innerWidth / 2,
       y: 120,
@@ -1009,7 +1195,8 @@ export class ThreeGameEngine {
 
     const bossLen = stage.bossLength;
     const bossAngle = Math.random() * Math.PI * 2;
-    const bossDist = 45;
+    this.bossPatrolAngle = bossAngle;
+    const bossDist = 1850;
     const bx = Math.cos(bossAngle) * bossDist;
     const bz = Math.sin(bossAngle) * bossDist;
 
@@ -1021,7 +1208,7 @@ export class ThreeGameEngine {
       alive: true,
       x: bx,
       z: bz,
-      heading: bossAngle + Math.PI,
+      heading: bossAngle + Math.PI / 2,
       speed: 8.5,
       turnSpeed: 2.2,
       length: bossLen,
@@ -1046,7 +1233,8 @@ export class ThreeGameEngine {
       this.boss.history.push({ x: bx, z: bz, heading: this.boss.heading });
     }
 
-    for (let s = 0; s < bossLen; s++) {
+    const maxPoolSize = 200;
+    for (let s = 0; s < maxPoolSize; s++) {
       const segMesh = this.createSegmentMesh(
         bossColor,
         '#1e293b',
@@ -1055,6 +1243,7 @@ export class ThreeGameEngine {
         'dragon',
         true
       );
+      segMesh.visible = s < bossLen;
       this.scene.add(segMesh);
       this.boss.segments.push({
         mesh: segMesh,
@@ -1066,6 +1255,181 @@ export class ThreeGameEngine {
     this.stats.bossAlive = true;
     this.stats.bossHp = stage.bossHp;
     this.stats.bossMaxHp = stage.bossHp;
+    this.stats.stageProgress = 100;
+    this.stats.bossPhase = 1;
+
+    // Transition Arena Appearance
+    this.transitionArenaColors(stage);
+  }
+
+  public trigger11MinuteTeleport() {
+    if (this.hasTeleportedToPerimeter) return;
+    this.hasTeleportedToPerimeter = true;
+    this.canEatBoss = true;
+
+    // Ensure Stage Boss is spawned
+    if (!this.boss || !this.boss.alive) {
+      this.spawnStageBoss();
+    }
+
+    // Outer perimeter ring coordinates where the Boss patrols
+    const perimeterRadius = 1850;
+    const targetAngle = this.boss ? this.bossPatrolAngle + 0.05 : Math.random() * Math.PI * 2;
+    const outerSpawnX = Math.cos(targetAngle) * perimeterRadius + 5;
+    const outerSpawnZ = Math.sin(targetAngle) * perimeterRadius + 5;
+
+    this.player.x = outerSpawnX;
+    this.player.z = outerSpawnZ;
+    this.player.heading = Math.atan2(-outerSpawnZ, -outerSpawnX);
+    if (this.player.headGroup) {
+      this.player.headGroup.position.set(outerSpawnX, 0, outerSpawnZ);
+    }
+
+    this.player.history = [];
+    for (let h = 0; h < 300; h++) {
+      this.player.history.push({ x: outerSpawnX, z: outerSpawnZ, heading: this.player.heading });
+    }
+    this.updateTailSegments(this.player, 0.016);
+
+    soundManager.playBossAlert();
+    this.triggerScreenShake(2.0);
+    this.spawnParticleBurst(outerSpawnX, outerSpawnZ, '#38bdf8', 50, 'confetti');
+    this.spawnParticleBurst(outerSpawnX, outerSpawnZ, '#f43f5e', 30, 'spark');
+
+    this.onFloatingText({
+      id: `tp_${Date.now()}`,
+      text: `⚡ 11-Minute mark reached! Teleported outside the arena perimeter to hunt the Boss!`,
+      color: '#38bdf8',
+      x: window.innerWidth / 2,
+      y: 120,
+      opacity: 1,
+    });
+  }
+
+  private transitionArenaColors(stage: StageDefinition) {
+    // Shift fog and ground colors to boss theme
+    const targetFog = new THREE.Color(stage.bossColor);
+    const targetSky = new THREE.Color(stage.bossColor);
+
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.lerp(targetFog, 0.5);
+    }
+    
+    // Pulse light to boss color
+    this.hemiLight.color.lerp(targetSky, 0.5);
+    this.dirLight.color.lerp(new THREE.Color(0xffffff), 0.5);
+  }
+
+  private getPooledCoinMesh(scale: number = 1.0): THREE.Mesh | null {
+    const mesh = this.coinSegmentPool.find(m => !m.visible);
+    if (mesh) {
+      mesh.visible = true;
+      mesh.scale.set(scale, scale, scale);
+      return mesh;
+    }
+    return null;
+  }
+
+  private spawnSnakeCoin() {
+    const id = 'snake_coin_' + Math.random().toString(36).substring(2, 9);
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 50);
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    const heading = Math.random() * Math.PI * 2;
+    const length = 6 + Math.floor(Math.random() * 6);
+    
+    const headGroup = new THREE.Group();
+    
+    // Top head coin
+    const headTop = this.getPooledCoinMesh(1.5);
+    if (headTop) {
+      headTop.position.set(0, 0.2, 0);
+      headGroup.add(headTop);
+    }
+
+    // Jaw group for eating animation
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, -0.1, 0);
+    const headBottom = this.getPooledCoinMesh(1.5);
+    if (headBottom) {
+      headBottom.position.set(0, -0.2, 0);
+      jawGroup.add(headBottom);
+    }
+    headGroup.add(jawGroup);
+
+    this.scene.add(headGroup);
+
+    const snakeCoin: SnakeEntity = {
+      id,
+      name: 'SNAKE COIN',
+      isPlayer: false,
+      isBoss: false,
+      alive: true,
+      x,
+      z,
+      heading,
+      speed: 7.0,
+      turnSpeed: 1.8,
+      length,
+      targetLength: length,
+      level: 1,
+      exp: 0,
+      hp: 1,
+      maxHp: 1,
+      skinPrimary: '#ffd700',
+      skinSecondary: '#ffd700',
+      skinGlow: '#ffd700',
+      skinModelType: 'classic',
+      headGroup,
+      segments: [],
+      history: [],
+      aiState: 'forage',
+      aiTimer: 2.0,
+    };
+
+    for (let h = 0; h < 200; h++) {
+      snakeCoin.history.push({ x, z, heading });
+    }
+
+    for (let i = 0; i < length; i++) {
+      const segMesh = this.getPooledCoinMesh(1.2);
+      if (segMesh) {
+        snakeCoin.segments.push({
+          mesh: segMesh,
+          position: new THREE.Vector3(x, 0.45, z),
+          rotation: new THREE.Euler(0, heading, 0),
+        });
+      }
+    }
+
+    this.snakeCoins.push(snakeCoin);
+  }
+
+  private spawnChest() {
+    const id = 'chest_' + Math.random().toString(36).substring(2, 9);
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 50);
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    
+    const group = new THREE.Group();
+    group.position.set(x, 0.6, z);
+    
+    const bodyGeo = new THREE.BoxGeometry(2.0, 1.4, 1.4);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.8 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    group.add(body);
+    
+    const trimGeo = new THREE.BoxGeometry(2.2, 0.3, 1.6);
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.8 });
+    const trim = new THREE.Mesh(trimGeo, trimMat);
+    trim.position.y = 0.7;
+    group.add(trim);
+
+    this.scene.add(group);
+    this.chests.push({ id, x, z, meshGroup: group, active: true, type: Math.random() > 0.8 ? 'gold' : 'wood' });
   }
 
   // ==========================================
@@ -1101,9 +1465,20 @@ export class ThreeGameEngine {
   // ==========================================
   // GAME LOOP & TICK
   // ==========================================
-  private tick() {
+  private lastFrameTime: number = 0;
+  private readonly fpsInterval = 1000 / 80; // 80 FPS cap
+
+  private tick = (timestamp: number = 0) => {
     if (this.isDestroyed) return;
-    const delta = Math.min(this.clock.getDelta(), 0.1);
+    this.frameId = requestAnimationFrame(this.tick);
+
+    const elapsed = timestamp - this.lastFrameTime;
+    if (elapsed < this.fpsInterval - 1) {
+      return;
+    }
+    this.lastFrameTime = timestamp - (elapsed % this.fpsInterval);
+
+    const delta = Math.min(this.clock.getDelta(), 0.05);
 
     if (!this.isPaused && !this.isGameOver) {
       this.updateMatchTime(delta);
@@ -1116,14 +1491,31 @@ export class ThreeGameEngine {
       this.updatePellets(delta);
       this.updateGates(delta);
       this.updatePowerups(delta);
-      this.updateDropOffAndPads(delta);
+      this.updateSnakeCoins(delta);
+      this.updateChests(delta);
       this.updateCollisions();
+      this.updateParticles(delta);
+
+      // Random Spawning of Special Entities
+      if (Math.random() < 0.005 && this.snakeCoins.length < 5) {
+        this.spawnSnakeCoin();
+      }
+      if (Math.random() < 0.003 && this.chests.length < 6) {
+        this.spawnChest();
+      }
+
+      if (this.pelletComboTimer > 0) {
+        this.pelletComboTimer -= delta;
+        if (this.pelletComboTimer <= 0) {
+          this.pelletCombo = 0;
+        }
+      }
+
       this.updateCamera(delta);
     }
 
     this.renderer.render(this.scene, this.camera);
-    this.frameId = requestAnimationFrame(this.tick);
-  }
+  };
 
   // ==========================================
   // MATCH TIME & SHRINKING ZONE
@@ -1132,17 +1524,15 @@ export class ThreeGameEngine {
     this.matchTimeRemaining -= delta;
     this.stats.currentMatchTime = Math.max(0, this.matchTimeRemaining);
 
-    // Shrinking Battle Royale Danger Ring
-    const progress = 1 - this.matchTimeRemaining / MATCH_DURATION_SECONDS;
-    this.currentShrinkRadius =
-      this.arenaRadius - progress * (this.arenaRadius - this.minShrinkRadius);
-
-    if (this.ringBarrierMesh) {
-      const s = this.currentShrinkRadius / this.arenaRadius;
-      this.ringBarrierMesh.scale.set(s, 1, s);
+    // PlayerBossHunter: Track active match timer and auto-teleport at 11 minutes (660s)
+    if (!this.hasTeleportedToPerimeter && !this.isGameOver) {
+      this.matchTimer += delta;
+      if (this.matchTimer >= this.teleportUnlockTime) {
+        this.trigger11MinuteTeleport();
+      }
     }
 
-    // Spawn Boss at 40s remaining
+    // Boss spawning logic...
     if (
       this.matchTimeRemaining <= BOSS_SPAWN_TIME_REMAINING &&
       (!this.boss || !this.boss.alive) &&
@@ -1203,35 +1593,47 @@ export class ThreeGameEngine {
   // ==========================================
   // CONTROLS & SNAKE STEERING
   // ==========================================
+  // ==========================================
+  // INPUT & STEERING CONTROLS (ULTRA-SMOOTH JOYSTICK & KEYBOARD)
+  // ==========================================
   private updateControls(delta: number) {
     let dx = 0;
     let dz = 0;
 
-    // Keyboard controls
+    // Keyboard controls (WASD / Arrow Keys)
     if (this.keysPressed['KeyW'] || this.keysPressed['ArrowUp']) dz -= 1;
     if (this.keysPressed['KeyS'] || this.keysPressed['ArrowDown']) dz += 1;
     if (this.keysPressed['KeyA'] || this.keysPressed['ArrowLeft']) dx -= 1;
     if (this.keysPressed['KeyD'] || this.keysPressed['ArrowRight']) dx += 1;
 
-    // Virtual Joystick input
-    if (Math.abs(this.inputVector.x) > 0.05 || Math.abs(this.inputVector.y) > 0.05) {
+    // Virtual Joystick input (Touch / Pointer)
+    const joyMagnitude = Math.hypot(this.inputVector.x, this.inputVector.y);
+    if (joyMagnitude > 0.04) {
       dx = this.inputVector.x;
       dz = this.inputVector.y;
     }
 
     if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
       const targetHeading = Math.atan2(dz, dx);
-      // Snappy angular interpolation
+      // Snappy shortest-arc angular interpolation
       let diff = targetHeading - this.player.heading;
       while (diff < -Math.PI) diff += Math.PI * 2;
       while (diff > Math.PI) diff -= Math.PI * 2;
 
-      const maxStep = this.player.turnSpeed * delta;
+      // Dynamic agility: responsive turning rate that ramps with boost and tilt
+      const baseAgility = this.isBoosting ? 14.5 : 11.5;
+      const deflectionBonus = joyMagnitude > 0.5 ? 1.0 + (joyMagnitude - 0.5) * 0.4 : 1.0;
+      const currentTurnSpeed = baseAgility * deflectionBonus;
+
+      const maxStep = currentTurnSpeed * delta;
       if (Math.abs(diff) <= maxStep) {
         this.player.heading = targetHeading;
       } else {
         this.player.heading += Math.sign(diff) * maxStep;
       }
+
+      while (this.player.heading < -Math.PI) this.player.heading += Math.PI * 2;
+      while (this.player.heading > Math.PI) this.player.heading -= Math.PI * 2;
     }
   }
 
@@ -1265,24 +1667,70 @@ export class ThreeGameEngine {
     this.player.x += Math.cos(this.player.heading) * currentSpeed * delta;
     this.player.z += Math.sin(this.player.heading) * currentSpeed * delta;
 
-    // Clamp to arena
-    const distFromCenter = Math.hypot(this.player.x, this.player.z);
-    if (distFromCenter > this.currentShrinkRadius) {
-      // Danger zone damage!
-      this.player.targetLength -= delta * 3;
-      if (this.player.targetLength < 3) {
-        this.eliminateSnake(this.player);
-        return;
+    // Hard boundary wall collision
+    if (!this.hasTeleportedToPerimeter) {
+      const halfSize = this.arenaSize / 2;
+      if (Math.abs(this.player.x) > halfSize - 1 || Math.abs(this.player.z) > halfSize - 1) {
+        // Clamp position inside main arena
+        this.player.x = Math.max(-halfSize + 1, Math.min(halfSize - 1, this.player.x));
+        this.player.z = Math.max(-halfSize + 1, Math.min(halfSize - 1, this.player.z));
+
+        // Danger zone damage!
+        this.player.targetLength -= delta * 6;
+        if (this.player.targetLength < 3) {
+          this.eliminateSnake(this.player);
+          return;
+        }
+      }
+    } else {
+      // Player is hunting the Boss outside on the outer perimeter ring!
+      const outerMax = 2100;
+      const dCenter = Math.hypot(this.player.x, this.player.z);
+      if (dCenter > outerMax) {
+        const angle = Math.atan2(this.player.z, this.player.x);
+        this.player.x = Math.cos(angle) * outerMax;
+        this.player.z = Math.sin(angle) * outerMax;
       }
     }
 
     this.player.headGroup.position.set(this.player.x, 0, this.player.z);
     this.player.headGroup.rotation.y = -this.player.heading + Math.PI / 2;
 
+    // Dynamic head scaling based on growth (Pellets Eaten)
+    const pelletGrowth = (this.stats.pelletsEaten / 50);
+    const growthFactor = 1.0 + Math.min(3.0, pelletGrowth);
+    
+    // Snappy Snap-Open/Decay-Close Jaw Logic (Unity-inspired interpolation)
+    const snapSpeed = 25;
+    this.player.jawAngle = THREE.MathUtils.lerp(this.player.jawAngle || 0, this.player.targetJawAngle || 0, delta * snapSpeed);
+    
+    if ((this.player.targetJawAngle || 0) > 0) {
+      this.player.targetJawAngle = Math.max(0, this.player.targetJawAngle! - delta * (snapSpeed * 1.5));
+    }
+
+    const jaw = this.player.headGroup.getObjectByName('jawGroup');
+    if (jaw) {
+      jaw.rotation.x = this.player.jawAngle!;
+    }
+
+    // Squash & Stretch based on jaw opening
+    const stretch = 1.0 + (this.player.jawAngle! / 0.65) * 0.25;
+    const squash = 1.0 - (this.player.jawAngle! / 0.65) * 0.15;
+    this.player.headGroup.scale.set(growthFactor, growthFactor * stretch, growthFactor * squash);
+
     // Darting tongue animation
     if (this.player.tongueMesh) {
       this.player.tongueMesh.position.z =
         1.2 + Math.sin(this.clock.getElapsedTime() * 12) * 0.3;
+    }
+
+    // Shield Bubble Mesh
+    if (this.shieldBubbleMesh) {
+      const shieldActive = this.stats.activePowerUps.shield > 0;
+      this.shieldBubbleMesh.visible = shieldActive;
+      if (shieldActive) {
+        this.shieldBubbleMesh.rotation.y += 2.0 * delta;
+      }
     }
 
     // Record coordinate history
@@ -1298,6 +1746,20 @@ export class ThreeGameEngine {
     // Update trailing segments
     this.updateTailSegments(this.player, delta);
 
+    // Stage Progress slither accumulation
+    if (!this.stats.bossAlive) {
+      this.stats.stageProgress = Math.min(
+        100,
+        (this.stats.stageProgress || 0) + delta * 1.5
+      );
+      if (
+        this.stats.stageProgress >= 100 &&
+        (!this.boss || !this.boss.alive)
+      ) {
+        this.spawnStageBoss();
+      }
+    }
+
     // Sync stats
     this.stats.currentLength = Math.round(this.player.length);
     this.onStatsUpdate({ ...this.stats });
@@ -1309,39 +1771,7 @@ export class ThreeGameEngine {
   private updateTailSegments(snake: SnakeEntity, delta: number) {
     // Smooth target length interpolation
     snake.length = THREE.MathUtils.damp(snake.length, snake.targetLength, 6, delta);
-    const requiredSegments = Math.max(3, Math.floor(snake.length));
-
-    // Add segments if needed
-    while (snake.segments.length < requiredSegments) {
-      const idx = snake.segments.length;
-      const mesh = this.createSegmentMesh(
-        snake.skinPrimary,
-        snake.skinSecondary,
-        snake.skinGlow,
-        idx,
-        snake.skinModelType || 'classic',
-        snake.isBoss
-      );
-      this.scene.add(mesh);
-      const lastPos =
-        snake.segments.length > 0
-          ? snake.segments[snake.segments.length - 1].position
-          : new THREE.Vector3(snake.x, 0.45, snake.z);
-      snake.segments.push({
-        mesh,
-        position: lastPos.clone(),
-        rotation: new THREE.Euler(0, snake.heading, 0),
-      });
-    }
-
-    // Remove excess segments
-    while (snake.segments.length > requiredSegments) {
-      const removed = snake.segments.pop();
-      if (removed) {
-        this.scene.remove(removed.mesh);
-        removed.mesh.geometry.dispose();
-      }
-    }
+    const requiredSegments = Math.max(3, Math.min(snake.segments.length, Math.floor(snake.length)));
 
     // Slithering follow-chain logic: sample from history at distance intervals
     const segmentDistance = snake.isBoss ? 1.6 : 0.85;
@@ -1349,6 +1779,13 @@ export class ThreeGameEngine {
     let historyIdx = 1;
 
     for (let i = 0; i < snake.segments.length; i++) {
+      const seg = snake.segments[i];
+      if (i >= requiredSegments) {
+        seg.mesh.visible = false;
+        continue;
+      }
+      seg.mesh.visible = true;
+
       const targetDist = (i + 1) * segmentDistance;
       while (
         historyIdx < snake.history.length - 1 &&
@@ -1365,15 +1802,23 @@ export class ThreeGameEngine {
         snake.history[Math.min(historyIdx, snake.history.length - 1)] ||
         snake.history[0];
 
-      const seg = snake.segments[i];
       seg.position.x = THREE.MathUtils.damp(seg.position.x, sample.x, 18, delta);
       seg.position.z = THREE.MathUtils.damp(seg.position.z, sample.z, 18, delta);
       seg.mesh.position.set(seg.position.x, snake.isBoss ? 0.9 : 0.45, seg.position.z);
       seg.mesh.rotation.y = -sample.heading + Math.PI / 2;
 
+      // Dynamic segment scaling based on snake growth (Growth effect)
+      let growthFactor = 1.0;
+      if (snake.isPlayer) {
+        growthFactor = 1.0 + Math.min(3.0, this.stats.pelletsEaten / 50);
+      } else if (!snake.isBoss) {
+        growthFactor = 1.0 + Math.min(1.5, (snake.length - 8) / 150);
+      }
+      
       // Natural tail taper
       const taper = Math.max(0.4, 1 - (i / snake.segments.length) * 0.45);
-      seg.mesh.scale.set(taper, taper, taper);
+      const finalScale = taper * growthFactor;
+      seg.mesh.scale.set(finalScale, finalScale, finalScale);
     }
   }
 
@@ -1382,7 +1827,15 @@ export class ThreeGameEngine {
   // ==========================================
   private updateBots(delta: number) {
     this.bots.forEach((bot) => {
-      if (!bot.alive) return;
+      if (!bot.alive) {
+        if (bot.respawnTimer !== undefined && bot.respawnTimer > 0) {
+          bot.respawnTimer -= delta;
+          if (bot.respawnTimer <= 0) {
+            this.respawnBot(bot);
+          }
+        }
+        return;
+      }
 
       bot.aiTimer = (bot.aiTimer || 0) - delta;
       if (bot.aiTimer <= 0) {
@@ -1407,16 +1860,26 @@ export class ThreeGameEngine {
           bot.aiTarget = { x: this.player.x, z: this.player.z };
         } else {
           bot.aiState = 'forage';
-          // Find nearest gate or cluster of pellets
+          // Find nearest cluster of pellets via spatial grid
           let nearestPellet: PelletData | null = null;
           let minDist = 999;
-          for (let p = 0; p < 25; p++) {
-            const candidate = this.pellets[Math.floor(Math.random() * this.pellets.length)];
-            if (candidate && candidate.active) {
-              const d = Math.hypot(candidate.x - bot.x, candidate.z - bot.z);
-              if (d < minDist) {
-                minDist = d;
-                nearestPellet = candidate;
+          const gx = Math.floor((bot.x + 1250) / this.gridSize);
+          const gz = Math.floor((bot.z + 1250) / this.gridSize);
+          if (gx >= 0 && gx < this.gridDim && gz >= 0 && gz < this.gridDim) {
+            const gIdx = gz * this.gridDim + gx;
+            const cell = this.pelletGrid[gIdx];
+            if (cell && cell.length > 0) {
+              const testCount = Math.min(10, cell.length);
+              for (let c = 0; c < testCount; c++) {
+                const pIdx = cell[Math.floor(Math.random() * cell.length)];
+                const candidate = this.pellets[pIdx];
+                if (candidate && candidate.active) {
+                  const d = Math.hypot(candidate.x - bot.x, candidate.z - bot.z);
+                  if (d < minDist) {
+                    minDist = d;
+                    nearestPellet = candidate;
+                  }
+                }
               }
             }
           }
@@ -1424,8 +1887,8 @@ export class ThreeGameEngine {
             bot.aiTarget = { x: nearestPellet.x, z: nearestPellet.z };
           } else {
             bot.aiTarget = {
-              x: (Math.random() - 0.5) * 50,
-              z: (Math.random() - 0.5) * 50,
+              x: bot.x + (Math.random() - 0.5) * 80,
+              z: bot.z + (Math.random() - 0.5) * 80,
             };
           }
         }
@@ -1450,13 +1913,33 @@ export class ThreeGameEngine {
       bot.z += Math.sin(bot.heading) * currentSpeed * delta;
 
       // Arena boundary avoidance
-      const dist = Math.hypot(bot.x, bot.z);
-      if (dist > this.currentShrinkRadius - 5) {
+      const halfSize = this.arenaSize / 2;
+      if (Math.abs(bot.x) > halfSize - 5 || Math.abs(bot.z) > halfSize - 5) {
         bot.heading = Math.atan2(-bot.z, -bot.x) + (Math.random() - 0.5) * 0.5;
+        // Also clamp them
+        bot.x = Math.max(-halfSize + 1, Math.min(halfSize - 1, bot.x));
+        bot.z = Math.max(-halfSize + 1, Math.min(halfSize - 1, bot.z));
       }
 
       bot.headGroup.position.set(bot.x, 0, bot.z);
       bot.headGroup.rotation.y = -bot.heading + Math.PI / 2;
+
+      // Dynamic head scaling for bots
+      const botGrowth = 1.0 + Math.min(1.5, (bot.length - 8) / 150);
+
+      const snapSpeed = 25;
+      bot.jawAngle = THREE.MathUtils.lerp(bot.jawAngle || 0, bot.targetJawAngle || 0, delta * snapSpeed);
+      if ((bot.targetJawAngle || 0) > 0) {
+        bot.targetJawAngle = Math.max(0, bot.targetJawAngle! - delta * (snapSpeed * 1.5));
+      }
+
+      const jaw = bot.headGroup.getObjectByName('jawGroup');
+      if (jaw) {
+        jaw.rotation.x = bot.jawAngle!;
+      }
+
+      const stretch = 1.0 + (bot.jawAngle! / 0.6) * 0.2;
+      bot.headGroup.scale.set(botGrowth, botGrowth * stretch, botGrowth * 0.9);
 
       bot.history.unshift({ x: bot.x, z: bot.z, heading: bot.heading });
       if (bot.history.length > 400) bot.history.pop();
@@ -1465,38 +1948,122 @@ export class ThreeGameEngine {
     });
   }
 
+  private updateSnakeCoins(delta: number) {
+    this.snakeCoins.forEach((sc) => {
+      if (!sc.alive) return;
+
+      sc.aiTimer = (sc.aiTimer || 0) - delta;
+      if (sc.aiTimer <= 0) {
+        sc.aiTimer = 1.0 + Math.random() * 2;
+        sc.heading += (Math.random() - 0.5) * 2.0;
+      }
+
+      sc.x += Math.cos(sc.heading) * sc.speed * delta;
+      sc.z += Math.sin(sc.heading) * sc.speed * delta;
+
+      // Arena boundary avoidance
+      const halfSize = this.arenaSize / 2;
+      if (Math.abs(sc.x) > halfSize - 10 || Math.abs(sc.z) > halfSize - 10) {
+        sc.heading = Math.atan2(-sc.z, -sc.x) + (Math.random() - 0.5);
+      }
+
+      sc.headGroup.position.set(sc.x, 0.45, sc.z);
+      sc.headGroup.rotation.y = -sc.heading + Math.PI / 2;
+      
+      // Snappy jaw logic for coins
+      const snapSpeed = 25;
+      sc.jawAngle = THREE.MathUtils.lerp(sc.jawAngle || 0, sc.targetJawAngle || 0, delta * snapSpeed);
+      if ((sc.targetJawAngle || 0) > 0) {
+        sc.targetJawAngle = Math.max(0, sc.targetJawAngle! - delta * (snapSpeed * 1.5));
+      }
+
+      const jaw = sc.headGroup.getObjectByName('jawGroup');
+      if (jaw) {
+        jaw.rotation.x = sc.jawAngle!;
+      }
+
+      // Coins spin individually too
+      sc.headGroup.children.forEach(child => {
+        if (child.name !== 'jawGroup') {
+          child.rotation.y += 5 * delta;
+        }
+      });
+
+      sc.history.unshift({ x: sc.x, z: sc.z, heading: sc.heading });
+      if (sc.history.length > 300) sc.history.pop();
+
+      this.updateTailSegments(sc, delta);
+      // Extra rotation for tail segments (coins)
+      sc.segments.forEach((seg, idx) => {
+        seg.mesh.rotation.y += (5 + idx * 0.5) * delta;
+      });
+    });
+  }
+
+  private updateChests(delta: number) {
+    this.chests.forEach((chest) => {
+      if (!chest.active) return;
+      
+      // Floating animation
+      chest.meshGroup.position.y = 0.6 + Math.sin(this.clock.getElapsedTime() * 2 + parseInt(chest.id.substring(chest.id.length - 1), 36)) * 0.2;
+      chest.meshGroup.rotation.y += 0.5 * delta;
+    });
+  }
+
   // ==========================================
-  // STAGE BOSS UPDATE
+  // STAGE BOSS UPDATE (PerimeterBossPatrol)
   // ==========================================
   private updateBoss(delta: number) {
     if (!this.boss || !this.boss.alive) return;
 
-    // Boss aggressively pursues player or roams destructively
-    const distToPlayer = Math.hypot(
-      this.player.x - this.boss.x,
-      this.player.z - this.boss.z
-    );
+    // Check Enraged Phase 2 (<50% HP)
+    if (this.boss.hp <= this.boss.maxHp * 0.5 && this.stats.bossPhase === 1) {
+      this.stats.bossPhase = 2;
+      this.boss.speed *= 1.35;
+      soundManager.playBossAlert();
+      this.triggerScreenShake(1.4);
+      this.spawnParticleBurst(this.boss.x, this.boss.z, '#ef4444', 60, 'confetti');
+      this.spawnParticleBurst(this.boss.x, this.boss.z, '#fbbf24', 40, 'spark');
 
-    let targetHeading = this.boss.heading;
-    if (this.player.alive && distToPlayer < 65) {
-      targetHeading = Math.atan2(
-        this.player.z - this.boss.z,
-        this.player.x - this.boss.x
-      );
-    } else {
-      // Circular patrol
-      targetHeading += 0.4 * delta;
+      this.onFloatingText({
+        id: Math.random().toString(),
+        text: `🔥 BOSS ENRAGED! PHASE 2 SPEED SURGE! 🔥`,
+        color: '#f97316',
+        x: window.innerWidth / 2,
+        y: 130,
+        opacity: 1,
+      });
     }
 
-    let diff = targetHeading - this.boss.heading;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    this.boss.heading += diff * this.boss.turnSpeed * delta;
+    // Perimeter Settings (PerimeterBossPatrol)
+    // Radius of the outer boundary wall loop (outside arena perimeter walls)
+    const perimeterRadius = 1850;
+    // Movement speed around the perimeter
+    const patrolSpeed = this.boss.speed * 18;
 
-    this.boss.x += Math.cos(this.boss.heading) * this.boss.speed * delta;
-    this.boss.z += Math.sin(this.boss.heading) * this.boss.speed * delta;
+    // Advance the angle along the circle loop over time: (patrolSpeed / perimeterRadius) * deltaTime
+    this.bossPatrolAngle += (patrolSpeed / perimeterRadius) * delta;
 
-    this.boss.headGroup.position.set(this.boss.x, 0, this.boss.z);
+    // Calculate circular coordinates outside the arena boundary
+    const targetX = Math.cos(this.bossPatrolAngle) * perimeterRadius;
+    const targetZ = Math.sin(this.bossPatrolAngle) * perimeterRadius;
+
+    // Rotate boss to face movement direction along the circle (Quaternion.LookRotation equivalent)
+    const moveDx = targetX - this.boss.x;
+    const moveDz = targetZ - this.boss.z;
+    if (Math.hypot(moveDx, moveDz) > 0.001) {
+      const targetHeading = Math.atan2(moveDz, moveDx);
+      let diff = targetHeading - this.boss.heading;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      this.boss.heading += diff * Math.min(1, delta * 10);
+    }
+
+    // Keep boss locked to the outer perimeter ring
+    this.boss.x = targetX;
+    this.boss.z = targetZ;
+
+    this.boss.headGroup.position.set(this.boss.x, 0.9, this.boss.z);
     this.boss.headGroup.rotation.y = -this.boss.heading + Math.PI / 2;
 
     this.boss.history.unshift({
@@ -1505,10 +2072,7 @@ export class ThreeGameEngine {
       heading: this.boss.heading,
     });
     if (this.boss.history.length > 500) this.boss.history.pop();
-
     this.updateTailSegments(this.boss, delta);
-
-    // Sync boss stats
     this.stats.bossHp = this.boss.hp;
   }
 
@@ -1528,42 +2092,68 @@ export class ThreeGameEngine {
 
     let matrixDirty = false;
 
-    this.pellets.forEach((p) => {
-      if (!p.active) return;
+    // Spatial Partitioning Optimization: Only check pellets in nearby grid cells
+    const agents = [this.player, ...this.bots.filter(b => b.alive), ...this.snakeCoins.filter(s => s.alive)];
+    const checkedPellets = new Set<number>();
 
-      // Check Player magnet pull
-      const dPlayer = Math.hypot(p.x - this.player.x, p.z - this.player.z);
-      if (dPlayer < magnetRadius && this.player.alive) {
-        // Physically vacuum pellet towards head
-        const pullSpeed = 24 * delta;
-        p.x += ((this.player.x - p.x) / dPlayer) * pullSpeed;
-        p.z += ((this.player.z - p.z) / dPlayer) * pullSpeed;
-        _mat4.makeTranslation(p.x, 0.45, p.z);
-        this.pelletInstancedMesh.setMatrixAt(p.meshIndex, _mat4);
-        matrixDirty = true;
-      }
+    agents.forEach(agent => {
+      const gx = Math.floor((agent.x + 1250) / this.gridSize);
+      const gz = Math.floor((agent.z + 1250) / this.gridSize);
+      
+      // Check 3x3 neighborhood
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oz = -1; oz <= 1; oz++) {
+          const ngx = gx + ox;
+          const ngz = gz + oz;
+          if (ngx >= 0 && ngx < this.gridDim && ngz >= 0 && ngz < this.gridDim) {
+            const gIdx = ngz * this.gridDim + ngx;
+            const cell = this.pelletGrid[gIdx];
+            if (!cell) continue;
 
-      // Check collision with Player
-      if (dPlayer < 1.4 && this.player.alive) {
-        p.active = false;
-        soundManager.playPelletEat();
-        this.eatPellet(this.player, p);
-        this.respawnPellet(p);
-        matrixDirty = true;
-        return;
-      }
+            for (let i = 0; i < cell.length; i++) {
+              const pIdx = cell[i];
+              if (checkedPellets.has(pIdx)) continue;
+              checkedPellets.add(pIdx);
 
-      // Check collision with Bots
-      this.bots.forEach((bot) => {
-        if (!bot.alive) return;
-        const dBot = Math.hypot(p.x - bot.x, p.z - bot.z);
-        if (dBot < 1.3) {
-          p.active = false;
-          bot.targetLength += 0.4;
-          this.respawnPellet(p);
-          matrixDirty = true;
+              const p = this.pellets[pIdx];
+              if (!p.active) continue;
+
+              const dAgent = Math.hypot(p.x - agent.x, p.z - agent.z);
+              
+              if (agent.isPlayer) {
+                // Player vacuum logic
+                if (dAgent < magnetRadius) {
+                  const pullSpeed = 24 * delta;
+                  p.x += ((agent.x - p.x) / dAgent) * pullSpeed;
+                  p.z += ((agent.z - p.z) / dAgent) * pullSpeed;
+                  _mat4.makeTranslation(p.x, 0.45, p.z);
+                  this.pelletInstancedMesh.setMatrixAt(p.meshIndex, _mat4);
+                  matrixDirty = true;
+                }
+                // Player eat logic
+                if (dAgent < 1.4) {
+                  p.active = false;
+                  soundManager.playPelletEat();
+                  this.eatPellet(agent, p);
+                  this.respawnPellet(p);
+                  matrixDirty = true;
+                  continue;
+                }
+              } else {
+                // Bot eat logic
+                if (dAgent < 1.3) {
+                  p.active = false;
+                  agent.targetLength += 0.4;
+                  agent.targetJawAngle = 0.65;
+                  this.respawnPellet(p);
+                  matrixDirty = true;
+                  continue;
+                }
+              }
+            }
+          }
         }
-      });
+      }
     });
 
     if (matrixDirty) {
@@ -1577,6 +2167,24 @@ export class ThreeGameEngine {
     this.stats.score += 25;
     this.stats.pelletsEaten++;
 
+    // Trigger snappy munch animation
+    snake.targetJawAngle = 0.65;
+
+    if (!this.stats.bossAlive) {
+      this.stats.stageProgress = Math.min(100, (this.stats.stageProgress || 0) + 1.8);
+      if (this.stats.stageProgress >= 100 && (!this.boss || !this.boss.alive)) {
+        this.spawnStageBoss();
+      }
+    }
+
+    // Pitch-shifted combo chain audio
+    this.pelletCombo++;
+    this.pelletComboTimer = 0.5;
+    soundManager.playPelletEatChain(this.pelletCombo);
+
+    // Particle burst on floor
+    this.spawnParticleBurst(pellet.x, pellet.z, pellet.color, 12, 'spark');
+
     // In-Match Evolution Level-Up Progression
     if (snake.exp >= this.stats.expForNextLevel) {
       snake.level++;
@@ -1584,6 +2192,7 @@ export class ThreeGameEngine {
       this.stats.expForNextLevel = Math.round(this.stats.expForNextLevel * 1.4);
       this.stats.level = snake.level;
       soundManager.playLevelUp();
+      this.triggerScreenShake(0.6);
 
       // Check Evolution Tier
       const tier =
@@ -1689,79 +2298,35 @@ export class ThreeGameEngine {
             y: 260,
             opacity: 1,
           });
+        } else if (pu.type === 'fire') {
+          this.stats.activePowerUps.fire = duration;
+          this.onFloatingText({
+            id: Math.random().toString(),
+            text: '🔥 FIRE PROJECTILES ACTIVE (12s)!',
+            color: '#ef4444',
+            x: window.innerWidth / 2,
+            y: 260,
+            opacity: 1,
+          });
         }
+
+        // Trigger smooth mouth animation sequence on powerup pickup
+        this.player.targetJawAngle = 0.65;
 
         // Respawn powerup after 25s
         setTimeout(() => {
           pu.active = true;
           pu.group.visible = true;
-          const angle = Math.random() * Math.PI * 2;
-          const r = 15 + Math.random() * 30;
-          pu.x = Math.cos(angle) * r;
-          pu.z = Math.sin(angle) * r;
+          const halfSize = this.arenaSize / 2 - 10;
+          pu.x = (Math.random() - 0.5) * halfSize * 2;
+          pu.z = (Math.random() - 0.5) * halfSize * 2;
           pu.group.position.set(pu.x, 1.2, pu.z);
         }, 25000);
       }
     });
   }
 
-  // ==========================================
-  // DROP-OFF BASE & IN-WORLD UPGRADE PADS
-  // ==========================================
-  private updateDropOffAndPads(delta: number) {
-    // 1. Drop-off Zone (Center Base)
-    if (this.dropOffZoneGroup) {
-      this.dropOffZoneGroup.children[1].rotation.y += 1.5 * delta;
-      const d = Math.hypot(this.player.x, this.player.z);
-      if (d < 7.0 && this.player.alive && this.player.targetLength > 6) {
-        // Bank segments into permanent coins!
-        const segmentsToBank = Math.min(
-          this.player.targetLength - 5,
-          Math.ceil(12 * delta)
-        );
-        if (segmentsToBank > 0) {
-          this.player.targetLength -= segmentsToBank;
-          const incomePerk =
-            1 +
-            ((this.collectionPerks.incomeBonus || 0) +
-              (this.collectionPerks.allStatsBonus || 0)) /
-              100;
-          const incomeMult =
-            (1 + this.stats.upgrades.incomeLevel * 0.25) * incomePerk;
-          const earned = Math.round(segmentsToBank * 15 * incomeMult);
-          this.stats.cashEarnedThisMatch += earned;
-          this.stats.totalPermanentCoins += earned;
-          soundManager.playCashOut();
 
-          this.onFloatingText({
-            id: Math.random().toString(),
-            text: `+$${earned} BANKED!`,
-            color: '#facc15',
-            x: window.innerWidth / 2,
-            y: 300,
-            opacity: 1,
-          });
-        }
-      }
-    }
-
-    // 2. In-World Tycoon Upgrade Pads
-    this.upgradePads.forEach((pad) => {
-      // Rotating orb on pedestal
-      pad.group.children[3].rotation.y += 2.0 * delta;
-
-      const d = Math.hypot(pad.x - this.player.x, pad.z - this.player.z);
-      if (d < pad.radius && this.player.alive) {
-        pad.charging += delta * 1.5;
-        if (pad.charging >= 1.0) {
-          pad.charging = 0;
-          this.tryPurchaseUpgrade(pad.type);
-        }
-      } else {
-        pad.charging = Math.max(0, pad.charging - delta * 2);
-      }
-    });
-  }
 
   public tryPurchaseUpgrade(type: UpgradeType): boolean {
     const keyMap: Record<UpgradeType, keyof PlayerUpgrades> = {
@@ -1795,23 +2360,68 @@ export class ThreeGameEngine {
   }
 
   // ==========================================
-  // COMBAT & COLLISION RESOLUTION
+  // COMBAT & COLLISION RESOLUTION (GOLDEN RULE: HEAD VS BODY)
   // ==========================================
   private updateCollisions() {
     if (!this.player.alive) return;
     const hasShield = this.stats.activePowerUps.shield > 0;
 
-    // 1. Player vs Bots
+    // Obstacle collisions
+    this.obstacles.forEach((obs) => {
+      // Player head collision with obstacle
+      const dObs = Math.hypot(this.player.x - obs.x, this.player.z - obs.z);
+      if (dObs < obs.radius + 1.0 && this.player.alive) {
+        const angle = Math.atan2(this.player.z - obs.z, this.player.x - obs.x);
+        this.player.x = obs.x + Math.cos(angle) * (obs.radius + 1.1);
+        this.player.z = obs.z + Math.sin(angle) * (obs.radius + 1.1);
+        this.player.heading = angle;
+      }
+
+      // Bot collision with obstacle
+      this.bots.forEach((bot) => {
+        if (!bot.alive) return;
+        const dBot = Math.hypot(bot.x - obs.x, bot.z - obs.z);
+        if (dBot < obs.radius + 1.0) {
+          const angle = Math.atan2(bot.z - obs.z, bot.x - obs.x);
+          bot.x = obs.x + Math.cos(angle) * (obs.radius + 1.1);
+          bot.z = obs.z + Math.sin(angle) * (obs.radius + 1.1);
+          bot.heading = angle;
+        }
+      });
+    });
+
+    // 1. Player vs Bots (Scale-Aware Collisions)
+    const playerGrowth = 1.0 + Math.min(3.0, this.stats.pelletsEaten / 50);
+
     this.bots.forEach((bot) => {
       if (!bot.alive) return;
+      const botGrowth = 1.0 + Math.min(1.5, (bot.length - 8) / 150);
 
-      // Head-to-Head collision
+      // Head-to-Head collision (Deadly based on length/shield)
       const dHead = Math.hypot(this.player.x - bot.x, this.player.z - bot.z);
-      if (dHead < 1.8) {
+      if (dHead > 35) return; // Broadphase cull for far bots
+
+      const headThreshold = (playerGrowth + botGrowth) * 0.9;
+
+      if (dHead < headThreshold) {
         if (hasShield || this.player.length >= bot.length) {
-          // Player destroys Bot!
+          // Player destroys Bot in head-on collision!
           this.eliminateSnake(bot);
           this.stats.botsKilled++;
+          
+          // Reward gems for 3-4 kills milestone
+          if (this.stats.botsKilled === 3 || this.stats.botsKilled === 4) {
+            this.stats.totalGems += 1;
+            this.onFloatingText({
+              id: `gem_${Date.now()}`,
+              text: `💎 DIAMOND EARNED (${this.stats.botsKilled} KILLS)!`,
+              color: '#38bdf8',
+              x: window.innerWidth / 2,
+              y: 180,
+              opacity: 1,
+            });
+          }
+
           this.stats.score += 200;
           this.stats.totalPermanentCoins += 50;
           soundManager.playKill();
@@ -1824,55 +2434,169 @@ export class ThreeGameEngine {
             opacity: 1,
           });
         } else {
-          // Bot destroys Player!
+          // Bot destroys Player in head-on collision!
           this.eliminateSnake(this.player);
           soundManager.playHurt();
           return;
         }
       }
 
-      // Player Head vs Bot Body Segments
-      if (!hasShield) {
-        for (let s = 1; s < bot.segments.length; s++) {
-          const seg = bot.segments[s];
-          const dSeg = Math.hypot(
-            this.player.x - seg.position.x,
-            this.player.z - seg.position.z
-          );
-          if (dSeg < 1.2) {
-            // Player crashed into bot's body!
-            this.eliminateSnake(this.player);
-            soundManager.playHurt();
-            return;
-          }
-        }
-      }
+      // Player Head vs Bot Body Segments (Tail Chasing / Eating from Behind - NON DEADLY)
+      // Check distance to bot segments
+      const bodyThreshold = (playerGrowth + botGrowth) * 0.6;
+      for (let s = 1; s < bot.segments.length; s++) {
+        const seg = bot.segments[s];
+        if (!seg.mesh.visible) continue;
 
-      // Bot Head vs Player Body Segments
-      for (let s = 1; s < this.player.segments.length; s++) {
-        const seg = this.player.segments[s];
         const dSeg = Math.hypot(
-          bot.x - seg.position.x,
-          bot.z - seg.position.z
+          this.player.x - seg.position.x,
+          this.player.z - seg.position.z
         );
-        if (dSeg < 1.2) {
-          // Bot crashed into player's body!
-          this.eliminateSnake(bot);
-          this.stats.botsKilled++;
-          this.stats.score += 150;
-          soundManager.playKill();
+
+        if (dSeg < bodyThreshold) {
+          // Consume opponent tail segment safely! (segment.ConsumeSegment; snakeLength += 1)
+          bot.targetLength = Math.max(3, bot.targetLength - 1.0);
+          this.player.targetLength += 1.0;
+          this.stats.score += 25;
+          
+          soundManager.playPelletEat();
+          this.player.targetJawAngle = 0.65;
+          this.spawnParticleBurst(seg.position.x, seg.position.y, bot.skinPrimary, 8, 'spark');
+          
           this.onFloatingText({
             id: Math.random().toString(),
-            text: `💥 ${bot.name} CRASHED INTO YOUR TAIL!`,
-            color: '#38bdf8',
+            text: `🦷 CHOMP! +1 TAIL`,
+            color: '#10b981',
             x: window.innerWidth / 2,
-            y: 160,
-            opacity: 1,
+            y: 155,
+            opacity: 0.8,
           });
           break;
         }
       }
+
+      // Bot Head vs Player Body Segments (Bot eating player tail - NON DEADLY)
+      for (let s = 1; s < this.player.segments.length; s++) {
+        const seg = this.player.segments[s];
+        if (!seg.mesh.visible) continue;
+
+        const dSeg = Math.hypot(
+          bot.x - seg.position.x,
+          bot.z - seg.position.z
+        );
+        if (dSeg < bodyThreshold) {
+          // Bot bites player tail from behind
+          this.player.targetJawAngle = 0.3; // Slight reaction
+          bot.targetJawAngle = 0.65;
+          break;
+        }
+      }
     });
+
+    // 3. Bot vs Bot Combat (Scale-Aware with Proximity Culling)
+    for (let i = 0; i < this.bots.length; i++) {
+      const b1 = this.bots[i];
+      if (!b1.alive) continue;
+      const b1Growth = 1.0 + Math.min(1.5, (b1.length - 8) / 150);
+
+      for (let j = 0; j < this.bots.length; j++) {
+        if (i === j) continue;
+        const b2 = this.bots[j];
+        if (!b2.alive) continue;
+        const b2Growth = 1.0 + Math.min(1.5, (b2.length - 8) / 150);
+
+        // Broadphase distance cull: skip segment loop if bots are far apart
+        const dHead = Math.hypot(b1.x - b2.x, b1.z - b2.z);
+        if (dHead > 18) continue;
+
+        // Head-to-Head
+        const headThreshold = (b1Growth + b2Growth) * 0.8;
+
+        if (dHead < headThreshold) {
+          if (b1.length < b2.length) {
+            this.eliminateSnake(b1, b2.name);
+          } else {
+            this.eliminateSnake(b2, b1.name);
+          }
+          break;
+        }
+
+        // b1 Head vs b2 Body (Tail munching)
+        const bodyThreshold = (b1Growth + b2Growth) * 0.6;
+        for (let s = 1; s < b2.segments.length; s++) {
+          const seg = b2.segments[s];
+          if (!seg.mesh.visible) continue;
+          
+          const dSeg = Math.hypot(b1.x - seg.position.x, b1.z - seg.position.z);
+          if (dSeg < bodyThreshold) {
+            b2.targetLength = Math.max(5, b2.targetLength - 0.3);
+            b1.targetLength += 0.3;
+            b1.targetJawAngle = 0.65;
+            break;
+          }
+        }
+      }
+    }
+    // 4. Snake Coin & Treasure Chest Collisions
+    this.snakeCoins.forEach((sc) => {
+      if (!sc.alive) return;
+      const dHead = Math.hypot(this.player.x - sc.x, this.player.z - sc.z);
+      if (dHead < 2.5) {
+        sc.alive = false;
+        // Return parts to pool
+        sc.headGroup.children.forEach(child => {
+          if (child instanceof THREE.Mesh) {
+            child.visible = false;
+          } else if (child instanceof THREE.Group) {
+            child.children.forEach(gc => {
+              if (gc instanceof THREE.Mesh) gc.visible = false;
+            });
+          }
+        });
+        this.scene.remove(sc.headGroup);
+        sc.segments.forEach(s => {
+          s.mesh.visible = false;
+        });
+        const reward = 250 + (this.stats.upgrades.incomeLevel * 50);
+        this.stats.totalPermanentCoins += reward;
+        this.stats.score += 500;
+        soundManager.playSpinWin();
+        this.spawnParticleBurst(sc.x, sc.z, '#ffd700', 40, 'confetti');
+        this.spawnParticleBurst(sc.x, sc.z, '#ffffff', 20, 'spark');
+        this.onFloatingText({
+          id: Math.random().toString(),
+          text: `🐍💰 SNAKE COIN EATEN! +${reward} COINS`,
+          color: '#fbbf24',
+          x: window.innerWidth / 2,
+          y: 200,
+          opacity: 1
+        });
+      }
+    });
+    this.snakeCoins = this.snakeCoins.filter(sc => sc.alive);
+
+    this.chests.forEach((chest) => {
+      if (!chest.active) return;
+      const dChest = Math.hypot(this.player.x - chest.x, this.player.z - chest.z);
+      if (dChest < 4.0) {
+        chest.active = false;
+        this.scene.remove(chest.meshGroup);
+        const amount = (chest.type === 'gold' ? 1000 : 300) * (1 + this.stats.upgrades.incomeLevel * 0.1);
+        this.stats.totalPermanentCoins += Math.round(amount);
+        soundManager.playCashOut();
+        this.spawnParticleBurst(chest.x, chest.z, '#fbbf24', 50, 'confetti');
+        this.spawnParticleBurst(chest.x, chest.z, '#ffffff', 30, 'spark');
+        this.onFloatingText({
+          id: Math.random().toString(),
+          text: `🎁 TREASURE CHEST! +${Math.round(amount)} COINS`,
+          color: '#f59e0b',
+          x: window.innerWidth / 2,
+          y: 220,
+          opacity: 1
+        });
+      }
+    });
+    this.chests = this.chests.filter(c => c.active);
 
     // 2. Boss Combat
     if (this.boss && this.boss.alive) {
@@ -1882,16 +2606,20 @@ export class ThreeGameEngine {
       );
 
       // Hit boss head or body
-      if (dBossHead < 3.0) {
-        if (hasShield || this.player.length > 20) {
+      if (dBossHead < 3.8) {
+        if (this.canEatBoss || hasShield || this.player.length > 20) {
           // Deal damage to boss
-          const dmg = 45;
+          const dmg = this.canEatBoss ? 65 : 45;
           this.boss.hp -= dmg;
+          this.player.targetJawAngle = 0.65;
           soundManager.playKill();
+          this.spawnParticleBurst(this.boss.x, this.boss.z, this.boss.skinPrimary, 20, 'confetti');
 
           this.onFloatingText({
             id: Math.random().toString(),
-            text: `💥 BOSS HIT: -${dmg} HP!`,
+            text: this.canEatBoss
+              ? `🦈 CHOMPED THE BOSS HEAD! -${dmg} HP!`
+              : `💥 BOSS HIT: -${dmg} HP!`,
             color: '#f59e0b',
             x: window.innerWidth / 2,
             y: 140,
@@ -1923,15 +2651,63 @@ export class ThreeGameEngine {
           soundManager.playHurt();
         }
       }
+
+      // Head vs Boss Body Segments: Consume boss tail segment safely (PlayerBossHunter)!
+      for (let s = 1; s < this.boss.segments.length; s++) {
+        const seg = this.boss.segments[s];
+        if (!seg.mesh.visible) continue;
+
+        const dSeg = Math.hypot(this.player.x - seg.position.x, this.player.z - seg.position.z);
+        if (dSeg < 3.8) {
+          const dmg = this.canEatBoss ? 35 : 25;
+          this.boss.hp -= dmg;
+          this.boss.targetLength = Math.max(10, this.boss.targetLength - 1.5);
+          this.player.targetLength += 1.5;
+          this.player.targetJawAngle = 0.65;
+          soundManager.playPelletEat();
+          this.spawnParticleBurst(seg.position.x, seg.position.y, this.boss.skinPrimary, 15, 'spark');
+
+          this.onFloatingText({
+            id: Math.random().toString(),
+            text: this.canEatBoss
+              ? `🦷 Chomped a piece of the Boss from the outside! (-${dmg} HP)`
+              : `🦷 BOSS CHOMP! -${dmg} HP (+1.5 TAIL)`,
+            color: '#fbbf24',
+            x: window.innerWidth / 2,
+            y: 155,
+            opacity: 0.9,
+          });
+
+          if (this.boss.hp <= 0) {
+            this.eliminateSnake(this.boss);
+            this.stats.bossAlive = false;
+            this.stats.score += 2500;
+            this.stats.totalPermanentCoins += 500;
+            this.stats.totalGems += 5;
+            soundManager.playSpinWin();
+            setTimeout(() => this.triggerMatchEnd(), 2000);
+          }
+          break;
+        }
+      }
     }
   }
 
   // ==========================================
   // DEATH & LOOT BURST MECHANICS
   // ==========================================
-  private eliminateSnake(snake: SnakeEntity) {
+  private eliminateSnake(snake: SnakeEntity, attackerName?: string) {
     snake.alive = false;
     this.scene.remove(snake.headGroup);
+
+    // Screen Shake & Particle Explosion Burst
+    this.triggerScreenShake(1.2);
+    this.spawnParticleBurst(snake.x, snake.z, snake.skinPrimary, 40, 'confetti');
+    this.spawnParticleBurst(snake.x, snake.z, '#ffffff', 20, 'spark');
+
+    // Kill Feed Entry
+    const killer = attackerName || (snake.isPlayer ? 'Arena Hazard' : 'A Rival Snake');
+    this.addKillFeedEntry(`${killer} eliminated ${snake.name}`);
 
     // Burst loot onto arena floor!
     const lootCount = Math.min(45, Math.floor(snake.length * 2));
@@ -1955,11 +2731,19 @@ export class ThreeGameEngine {
     this.pelletInstancedMesh.instanceMatrix.needsUpdate = true;
 
     // Clean up segments
-    snake.segments.forEach((seg) => {
-      this.scene.remove(seg.mesh);
-      seg.mesh.geometry.dispose();
-    });
-    snake.segments = [];
+    if (snake.isPlayer || snake.isBoss) {
+      snake.segments.forEach((seg) => {
+        this.scene.remove(seg.mesh);
+        seg.mesh.geometry.dispose();
+      });
+      snake.segments = [];
+    } else {
+      // For AI bots: hide segments and schedule respawn countdown
+      snake.segments.forEach((seg) => {
+        seg.mesh.visible = false;
+      });
+      snake.respawnTimer = 3.5 + Math.random() * 2;
+    }
 
     if (snake.isPlayer) {
       this.isGameOver = true;
@@ -1986,10 +2770,10 @@ export class ThreeGameEngine {
       targetCamY = 45;
       targetCamZ = 35;
     } else {
-      // Dynamic: zooms out slightly when snake grows longer
-      const growthFactor = Math.min(1.8, 1 + this.player.length * 0.015);
-      targetCamY = 30 * growthFactor;
-      targetCamZ = 22 * growthFactor;
+      // Dynamic: zooms out much more when snake grows giant from pellets
+      const growthFactor = Math.min(2.5, 1 + (this.player.length * 0.012) + (this.stats.pelletsEaten / 120));
+      targetCamY = 32 * growthFactor;
+      targetCamZ = 24 * growthFactor;
     }
 
     const camX = this.player.x;
@@ -2015,6 +2799,13 @@ export class ThreeGameEngine {
       delta
     );
 
+    if (this.shakeIntensity > 0.01) {
+      this.camera.position.x += (Math.random() - 0.5) * this.shakeIntensity;
+      this.camera.position.y += (Math.random() - 0.5) * this.shakeIntensity;
+      this.camera.position.z += (Math.random() - 0.5) * this.shakeIntensity;
+      this.shakeIntensity = Math.max(0, this.shakeIntensity - delta * 3.5);
+    }
+
     _vec3A.set(this.player.x, 1.2, this.player.z);
     this.camera.lookAt(_vec3A);
 
@@ -2035,13 +2826,176 @@ export class ThreeGameEngine {
       playerPos: { x: this.player ? this.player.x : 0, z: this.player ? this.player.z : 0 },
       botPositions: this.bots.filter((b) => b.alive).map((b) => ({ x: b.x, z: b.z })),
       bossPos: this.boss && this.boss.alive ? { x: this.boss.x, z: this.boss.z } : null,
-      currentRadius: this.currentShrinkRadius,
-      maxRadius: this.arenaRadius,
+      currentRadius: this.arenaSize / 2,
+      maxRadius: this.arenaSize / 2,
     };
+  }
+
+  public getLiveLeaderboard(): LeaderboardEntry[] {
+    const rawList: {
+      name: string;
+      length: number;
+      score: number;
+      level: number;
+      isPlayer: boolean;
+      isBoss: boolean;
+      color: string;
+    }[] = [];
+
+    if (this.player && this.player.alive) {
+      rawList.push({
+        name: 'YOU (' + this.player.name + ')',
+        length: Math.round(this.player.length),
+        score: this.stats.score,
+        level: this.player.level,
+        isPlayer: true,
+        isBoss: false,
+        color: '#10b981',
+      });
+    }
+
+    this.bots.forEach((b) => {
+      if (b.alive) {
+        rawList.push({
+          name: b.name,
+          length: Math.round(b.length),
+          score: Math.round(b.length * 120),
+          level: b.level,
+          isPlayer: false,
+          isBoss: false,
+          color: b.skinPrimary,
+        });
+      }
+    });
+
+    if (this.boss && this.boss.alive) {
+      rawList.push({
+        name: '⚠️ ' + this.boss.name,
+        length: Math.round(this.boss.length),
+        score: 5000,
+        level: 15,
+        isPlayer: false,
+        isBoss: true,
+        color: '#ef4444',
+      });
+    }
+
+    rawList.sort((a, b) => b.length - a.length);
+
+    return rawList.slice(0, 5).map((item, index) => ({
+      rank: index + 1,
+      ...item,
+    }));
+  }
+
+  public triggerScreenShake(intensity: number = 0.8) {
+    this.shakeIntensity = Math.max(this.shakeIntensity, intensity);
+  }
+
+  public spawnParticleBurst(
+    x: number, 
+    z: number, 
+    colorVal: THREE.Color | string | number, 
+    count: number = 18, 
+    type: ParticleType = 'spark'
+  ) {
+    let spawned = 0;
+    const color = new THREE.Color(colorVal);
+
+    for (let i = 0; i < this.particlePool.length && spawned < count; i++) {
+      const p = this.particlePool[i];
+      if (p.mesh.visible || p.type !== type) continue;
+
+      p.mesh.visible = true;
+      p.mesh.position.set(x, 0.6, z);
+      if (p.mesh.material instanceof THREE.MeshBasicMaterial) {
+        p.mesh.material.color.copy(color);
+        p.mesh.material.opacity = 1;
+      }
+
+      const angle = Math.random() * Math.PI * 2;
+      const speed = type === 'confetti' ? 4 + Math.random() * 10 : 2 + Math.random() * 6;
+      p.vx = Math.cos(angle) * speed;
+      p.vy = type === 'confetti' ? 5 + Math.random() * 10 : 3 + Math.random() * 6;
+      p.vz = Math.sin(angle) * speed;
+      
+      p.vrx = (Math.random() - 0.5) * 15;
+      p.vry = (Math.random() - 0.5) * 15;
+      p.vrz = (Math.random() - 0.5) * 15;
+
+      p.life = 0;
+      p.maxLife = type === 'confetti' ? 0.8 + Math.random() * 0.6 : 0.4 + Math.random() * 0.3;
+      
+      this.particles.push(p);
+      spawned++;
+    }
+  }
+
+  private updateParticles(delta: number) {
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.life += delta;
+      const lifeRatio = p.life / p.maxLife;
+
+      if (p.life >= p.maxLife) {
+        p.mesh.visible = false;
+        this.particles.splice(i, 1);
+        continue;
+      }
+
+      p.mesh.position.x += p.vx * delta;
+      p.mesh.position.y += p.vy * delta;
+      p.mesh.position.z += p.vz * delta;
+
+      // Rotation for confetti
+      if (p.type === 'confetti') {
+        p.mesh.rotation.x += p.vrx * delta;
+        p.mesh.rotation.y += p.vry * delta;
+        p.mesh.rotation.z += p.vrz * delta;
+        p.vy -= 22 * delta; // Heavier gravity
+      } else {
+        p.vy -= 12 * delta; // Lighter gravity for sparks
+      }
+
+      if (p.mesh.position.y < 0.15) {
+        p.mesh.position.y = 0.15;
+        p.vx *= 0.7;
+        p.vz *= 0.7;
+        p.vy = Math.abs(p.vy) * 0.3; // Bounce
+      }
+
+      const scale = p.type === 'spark' 
+        ? Math.max(0.01, 1.0 - lifeRatio) 
+        : Math.max(0.01, 1.0 - lifeRatio * 0.5);
+      p.mesh.scale.set(scale, scale, scale);
+
+      if (p.mesh.material instanceof THREE.MeshBasicMaterial) {
+        p.mesh.material.opacity = Math.max(0, 1.0 - lifeRatio);
+      }
+    }
+  }
+
+  public addKillFeedEntry(text: string, color: string = '#ef4444') {
+    const entry: KillFeedEntry = {
+      id: Math.random().toString(),
+      text,
+      color,
+      time: Date.now(),
+    };
+    this.killFeed.unshift(entry);
+    if (this.killFeed.length > 5) this.killFeed.pop();
+  }
+
+  public getKillFeed(): KillFeedEntry[] {
+    const now = Date.now();
+    return this.killFeed.filter((k) => now - k.time < 6000);
   }
 
   public restartMatch() {
     this.matchTimeRemaining = MATCH_DURATION_SECONDS;
+    this.matchTimer = 0;
+    this.hasTeleportedToPerimeter = false;
+    this.canEatBoss = false;
     this.isGameOver = false;
     this.isVictory = false;
     this.isPaused = false;
@@ -2055,10 +3009,13 @@ export class ThreeGameEngine {
     // Reset bots
     this.bots.forEach((b) => {
       this.scene.remove(b.headGroup);
-      b.segments.forEach((s) => this.scene.remove(s.mesh));
+      b.segments.forEach((s) => {
+        this.scene.remove(s.mesh);
+        s.mesh.geometry.dispose();
+      });
     });
     this.bots = [];
-    this.spawnBots(6);
+    this.spawnBots(28);
 
     // Reset boss
     if (this.boss) {
@@ -2066,12 +3023,50 @@ export class ThreeGameEngine {
       this.boss.segments.forEach((s) => this.scene.remove(s.mesh));
       this.boss = null;
     }
+    this.bossPatrolAngle = 0;
+
+    // Reset Snake Coins
+    this.snakeCoins.forEach((sc) => {
+      sc.headGroup.children.forEach(child => {
+        if (child instanceof THREE.Mesh) child.visible = false;
+        else if (child instanceof THREE.Group) child.children.forEach(gc => { if (gc instanceof THREE.Mesh) gc.visible = false; });
+      });
+      this.scene.remove(sc.headGroup);
+      sc.segments.forEach((s) => s.mesh.visible = false);
+    });
+    this.snakeCoins = [];
+
+    // Reset Chests
+    this.chests.forEach((c) => this.scene.remove(c.meshGroup));
+    this.chests = [];
   }
 
   public dispose() {
     this.isDestroyed = true;
     cancelAnimationFrame(this.frameId);
     window.removeEventListener('resize', this.onWindowResize.bind(this));
+
+    // Cleanup bots
+    this.bots.forEach((b) => {
+      this.scene.remove(b.headGroup);
+      b.segments.forEach((s) => {
+        this.scene.remove(s.mesh);
+        s.mesh.geometry.dispose();
+      });
+    });
+    this.bots = [];
+
+    // Cleanup entities
+    this.snakeCoins.forEach(sc => {
+      sc.headGroup.children.forEach(child => {
+        if (child instanceof THREE.Mesh) child.visible = false;
+        else if (child instanceof THREE.Group) child.children.forEach(gc => { if (gc instanceof THREE.Mesh) gc.visible = false; });
+      });
+      this.scene.remove(sc.headGroup);
+      sc.segments.forEach(s => s.mesh.visible = false);
+    });
+    this.chests.forEach(c => this.scene.remove(c.meshGroup));
+
     if (this.renderer && this.renderer.domElement) {
       this.renderer.dispose();
       this.container.removeChild(this.renderer.domElement);

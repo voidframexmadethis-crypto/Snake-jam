@@ -12,11 +12,34 @@ export interface PowerUpActive {
   speed: number;      // seconds remaining
   shield: number;     // seconds remaining
   doubleCash: number; // seconds remaining
+  fire: number;       // seconds remaining
 }
 
-export type SkinCategory = 'animals' | 'monsters' | 'cyberpunk' | 'foods' | 'celestial';
+export type SkinCategory =
+  | 'mythical'
+  | 'creatures'
+  | 'vehicles'
+  | 'neon'
+  | 'minimalist'
+  | 'foods'
+  | 'celestial'
+  | 'animals'
+  | 'monsters'
+  | 'cyberpunk';
+
 export type SkinRarity = 'common' | 'rare' | 'epic' | 'legendary';
-export type SkinModelType = 'classic' | 'cat' | 'dragon' | 'robot' | 'food' | 'celestial';
+export type SkinModelType =
+  | 'classic'
+  | 'cat'
+  | 'dragon'
+  | 'robot'
+  | 'food'
+  | 'celestial'
+  | 'roller_coaster'
+  | 'snowman'
+  | 'yeti'
+  | 'electric_eel'
+  | 'shark';
 export type SkinUnlockMethod = 'default' | 'coins' | 'milestone' | 'boss' | 'ad_watch' | 'gacha';
 
 export interface SkinDefinition {
@@ -30,6 +53,7 @@ export interface SkinDefinition {
   secondaryColor: string;
   glowColor: string;
   coinPrice?: number;
+  gemPrice?: number;
   requiredLevel?: number;
   requiredBossStage?: number;
   unlockType: SkinUnlockMethod;
@@ -51,37 +75,59 @@ export interface CollectionSet {
 
 export const COLLECTION_SETS: CollectionSet[] = [
   {
-    id: 'animals',
-    name: 'Cute Animals',
-    emoji: '🐾',
-    description: 'Playful pets with ears, whiskers, and fluffy tail styling.',
-    perkTitle: '+8% Movement Speed',
-    perkDescription: 'Swift paws grant a permanent +8% base cruising velocity.',
-    perkType: 'speed',
-    perkValue: 0.08,
-    color: '#f43f5e',
-  },
-  {
-    id: 'monsters',
-    name: 'Monsters & Mythics',
+    id: 'mythical',
+    name: 'Mythical Dragons',
     emoji: '🐉',
-    description: 'Ancient subterranean beasts with dragon horns and jagged spines.',
-    perkTitle: '+5 Starting Length',
-    perkDescription: 'Spawn into every arena with +5 extra body segments.',
+    description: 'Ancient subterranean wyrms and fire-breathing drakes with razor horns.',
+    perkTitle: '+6 Starting Length',
+    perkDescription: 'Spawn into every arena with +6 extra body segments.',
     perkType: 'startLength',
-    perkValue: 5,
+    perkValue: 6,
     color: '#f97316',
   },
   {
-    id: 'cyberpunk',
-    name: 'Sci-Fi Cyberpunk',
+    id: 'creatures',
+    name: 'Apex Creatures',
+    emoji: '🦈',
+    description: 'Ferocious apex predators: Sharks, Volt Eels, Abominable Yetis, and Frost Snowmen.',
+    perkTitle: '+10% Movement Speed',
+    perkDescription: 'Primal instincts grant a permanent +10% base cruising velocity.',
+    perkType: 'speed',
+    perkValue: 0.10,
+    color: '#06b6d4',
+  },
+  {
+    id: 'vehicles',
+    name: 'Arcade Vehicles',
+    emoji: '🎢',
+    description: 'High-speed roller coaster carts, rocket pods, and turbo arcade racers.',
+    perkTitle: '+15% Sprint Acceleration',
+    perkDescription: 'Heavy mechanical torque ramps sprint top-speed by +15%.',
+    perkType: 'speed',
+    perkValue: 0.15,
+    color: '#ef4444',
+  },
+  {
+    id: 'neon',
+    name: 'Cyberpunk Neon',
     emoji: '🤖',
-    description: 'High-tech synthetic wireframes with sensor visors and neon cores.',
+    description: 'High-tech synthetic wireframes with sensor visors and glowing neon conduits.',
     perkTitle: '+25% Drop-off Cash',
     perkDescription: 'Quantum processors earn +25% permanent coins when banking tail segments.',
     perkType: 'income',
     perkValue: 0.25,
-    color: '#06b6d4',
+    color: '#3b82f6',
+  },
+  {
+    id: 'minimalist',
+    name: 'Zen Minimalist',
+    emoji: '🐍',
+    description: 'Pure geometric forms, clean lines, and toxic monochrome aesthetics.',
+    perkTitle: '+4.0m Magnet Aura',
+    perkDescription: 'Harmonic resonance expands automatic food suction radius by +4.0 meters.',
+    perkType: 'magnet',
+    perkValue: 4.0,
+    color: '#10b981',
   },
   {
     id: 'foods',
@@ -96,7 +142,7 @@ export const COLLECTION_SETS: CollectionSet[] = [
   },
   {
     id: 'celestial',
-    name: 'Celestial & Void',
+    name: 'Celestial Royalty',
     emoji: '✨',
     description: 'Transcendent royalty draped in solar halos and starlight facets.',
     perkTitle: '+10% All Passives & Sparkle Trail',
@@ -104,6 +150,39 @@ export const COLLECTION_SETS: CollectionSet[] = [
     perkType: 'allStats',
     perkValue: 0.10,
     color: '#eab308',
+  },
+  {
+    id: 'animals',
+    name: 'Cute Animals',
+    emoji: '🐾',
+    description: 'Playful pets with ears, whiskers, and fluffy tail styling.',
+    perkTitle: '+8% Movement Speed',
+    perkDescription: 'Swift paws grant a permanent +8% base cruising velocity.',
+    perkType: 'speed',
+    perkValue: 0.08,
+    color: '#f43f5e',
+  },
+  {
+    id: 'monsters',
+    name: 'Monsters & Beasts',
+    emoji: '🐲',
+    description: 'Jagged spines and ancient bio-mechanical horrors.',
+    perkTitle: '+5 Starting Length',
+    perkDescription: 'Spawn into arena with +5 body segments.',
+    perkType: 'startLength',
+    perkValue: 5,
+    color: '#f97316',
+  },
+  {
+    id: 'cyberpunk',
+    name: 'Cybernetic Wireframe',
+    emoji: '⚡',
+    description: 'Pulse lasers and hyper-alloy plating.',
+    perkTitle: '+25% Drop-off Cash',
+    perkDescription: '+25% permanent coins when banking segments.',
+    perkType: 'income',
+    perkValue: 0.25,
+    color: '#06b6d4',
   },
 ];
 
@@ -117,7 +196,7 @@ export function computeCollectionPerks(unlockedSkinIds: string[]) {
   };
 
   COLLECTION_SETS.forEach((set) => {
-    const setSkins = INITIAL_SKINS.filter((s) => s.category === set.id);
+    const setSkins = HANDCRAFTED_SKINS.filter((s) => s.category === set.id);
     const complete =
       setSkins.length > 0 && setSkins.every((s) => unlockedSkinIds.includes(s.id));
     if (complete) {
@@ -132,12 +211,115 @@ export function computeCollectionPerks(unlockedSkinIds: string[]) {
   return perks;
 }
 
-export const INITIAL_SKINS: SkinDefinition[] = [
-  // --- Cute Animals ---
+// ---------------------------------------------------------------------------
+// HANDCRAFTED FEATURED SKINS
+// ---------------------------------------------------------------------------
+export const HANDCRAFTED_SKINS: SkinDefinition[] = [
+  // --- Minimalist ---
+  {
+    id: 'emerald',
+    name: 'Toxic Emerald',
+    category: 'minimalist',
+    rarity: 'common',
+    modelType: 'classic',
+    description: 'Classic venomous serpent with bright green bio-luminescent scales.',
+    primaryColor: '#10b981',
+    secondaryColor: '#047857',
+    glowColor: '#34d399',
+    unlockType: 'default',
+    unlocked: true,
+    statBonus: 'Standard Issue',
+  },
+  {
+    id: 'pure_mono',
+    name: 'Mono White',
+    category: 'minimalist',
+    rarity: 'rare',
+    modelType: 'classic',
+    description: 'Ultra-clean pristine white matte scales with sleek minimal styling.',
+    primaryColor: '#f8fafc',
+    secondaryColor: '#94a3b8',
+    glowColor: '#ffffff',
+    coinPrice: 350,
+    unlockType: 'coins',
+    statBonus: '+3% Score Multiplier',
+  },
+  {
+    id: 'pure_stealth',
+    name: 'Midnight Obsidian',
+    category: 'minimalist',
+    rarity: 'epic',
+    modelType: 'classic',
+    description: 'Deep matte dark carbon finish designed for total arena stealth.',
+    primaryColor: '#090d16',
+    secondaryColor: '#1e293b',
+    glowColor: '#38bdf8',
+    coinPrice: 750,
+    unlockType: 'coins',
+    statBonus: '+6% Score Multiplier',
+  },
+
+  // --- Creatures (Shark, Electric Eel, Yeti, Snowman, Cat, Doge) ---
+  {
+    id: 'megalodon_shark',
+    name: 'Apex Megalodon',
+    category: 'creatures',
+    rarity: 'legendary',
+    modelType: 'shark',
+    description: 'Ferocious prehistoric deep-sea predator with prominent dorsal fin and razor-sharp munching teeth.',
+    primaryColor: '#0284c7',
+    secondaryColor: '#0f172a',
+    glowColor: '#38bdf8',
+    coinPrice: 2200,
+    unlockType: 'coins',
+    statBonus: '+10% Speed & Shark Chomp',
+  },
+  {
+    id: 'electric_eel_volt',
+    name: 'Volt Eel',
+    category: 'creatures',
+    rarity: 'epic',
+    modelType: 'electric_eel',
+    description: 'Highly charged aquatic predator with glowing bio-luminescent voltage streaks.',
+    primaryColor: '#3b82f6',
+    secondaryColor: '#1d4ed8',
+    glowColor: '#fbbf24',
+    coinPrice: 1800,
+    unlockType: 'coins',
+    statBonus: '+8% Magnet & Spark Effect',
+  },
+  {
+    id: 'yeti_abominable',
+    name: 'Ancient Yeti',
+    category: 'creatures',
+    rarity: 'legendary',
+    modelType: 'yeti',
+    description: 'The legendary abominable snow-serpent with thick white fur and massive tusks.',
+    primaryColor: '#f1f5f9',
+    secondaryColor: '#38bdf8',
+    glowColor: '#ffffff',
+    coinPrice: 3000,
+    unlockType: 'coins',
+    statBonus: '+15% Max HP & Ice Spikes',
+  },
+  {
+    id: 'frosty_snowman',
+    name: 'Frosty Snowman',
+    category: 'creatures',
+    rarity: 'epic',
+    modelType: 'snowman',
+    description: 'Chilly winter friend with coal eyes, a carrot nose, and a fancy black top hat.',
+    primaryColor: '#ffffff',
+    secondaryColor: '#f97316',
+    glowColor: '#bae6fd',
+    coinPrice: 1200,
+    unlockType: 'coins',
+    statBonus: '+6% Score & Snow Trail',
+  },
   {
     id: 'cat_feline',
     name: 'Neko Kitty',
-    category: 'animals',
+    category: 'creatures',
     rarity: 'common',
     modelType: 'cat',
     description: 'Adorable cat serpent featuring playful ears, whiskers, and a fluffy bell collar.',
@@ -151,7 +333,7 @@ export const INITIAL_SKINS: SkinDefinition[] = [
   {
     id: 'shiba_doge',
     name: 'Shiba Inu',
-    category: 'animals',
+    category: 'creatures',
     rarity: 'rare',
     modelType: 'cat',
     description: 'Energetic loyal pup with perked triangular ears and honey coat.',
@@ -165,7 +347,7 @@ export const INITIAL_SKINS: SkinDefinition[] = [
   {
     id: 'panda_bamboo',
     name: 'Zen Panda',
-    category: 'animals',
+    category: 'creatures',
     rarity: 'epic',
     modelType: 'cat',
     description: 'Calm black-and-white bear serpent fueled by pure bamboo tranquility.',
@@ -177,25 +359,55 @@ export const INITIAL_SKINS: SkinDefinition[] = [
     statBonus: '+5% Score Multiplier',
   },
 
-  // --- Monsters & Mythics ---
+  // --- Vehicles (Roller Coaster Cart, Speedsters) ---
   {
-    id: 'emerald',
-    name: 'Toxic Emerald',
-    category: 'monsters',
-    rarity: 'common',
-    modelType: 'classic',
-    description: 'Classic venomous serpent with bright green bio-luminescent scales.',
-    primaryColor: '#10b981',
-    secondaryColor: '#047857',
-    glowColor: '#34d399',
-    unlockType: 'default',
-    unlocked: true,
-    statBonus: 'Standard Issue',
+    id: 'roller_coaster_vroom',
+    name: 'Coaster Car',
+    category: 'vehicles',
+    rarity: 'legendary',
+    modelType: 'roller_coaster',
+    description: 'High-speed arcade roller coaster car with chrome bumpers and aerodynamic windshield.',
+    primaryColor: '#ef4444',
+    secondaryColor: '#334155',
+    glowColor: '#ffffff',
+    coinPrice: 2500,
+    unlockType: 'coins',
+    statBonus: '+12% Speed & Car Horn',
   },
+  {
+    id: 'turbo_hypercar',
+    name: 'Turbo Racer',
+    category: 'vehicles',
+    rarity: 'legendary',
+    modelType: 'roller_coaster',
+    description: 'Nitro-injected hypercar chassis with track spoilers and radiant underglow.',
+    primaryColor: '#0ea5e9',
+    secondaryColor: '#1e1b4b',
+    glowColor: '#38bdf8',
+    coinPrice: 3200,
+    unlockType: 'coins',
+    statBonus: '+15% Sprint Acceleration',
+  },
+  {
+    id: 'rocket_pod',
+    name: 'Orbital Cart',
+    category: 'vehicles',
+    rarity: 'epic',
+    modelType: 'roller_coaster',
+    description: 'Space coaster capsule propelled by mini-thrusters and thermal heat shields.',
+    primaryColor: '#f97316',
+    secondaryColor: '#451a03',
+    glowColor: '#fdba74',
+    gemPrice: 8,
+    unlockType: 'milestone',
+    statBonus: '+8% Velocity Boost',
+  },
+
+  // --- Mythical (Dragon, Wyrm, Drake) ---
   {
     id: 'lava_wyrm',
     name: 'Magma Wyrm',
-    category: 'monsters',
+    category: 'mythical',
     rarity: 'epic',
     modelType: 'dragon',
     description: 'Forged in subterranean volcanoes with sweeping dragon horns and molten armor plates.',
@@ -209,7 +421,7 @@ export const INITIAL_SKINS: SkinDefinition[] = [
   {
     id: 'void_phantom',
     name: 'Void Shadow',
-    category: 'monsters',
+    category: 'mythical',
     rarity: 'epic',
     modelType: 'dragon',
     description: 'Dimensional anomaly trailing dark matter spikes and violet lightning arcs.',
@@ -223,7 +435,7 @@ export const INITIAL_SKINS: SkinDefinition[] = [
   {
     id: 'frost_wyrm',
     name: 'Glacial Drake',
-    category: 'monsters',
+    category: 'mythical',
     rarity: 'legendary',
     modelType: 'dragon',
     description: 'Mythical frost leviathan with sharp ice crystal antlers that freeze the arena floor.',
@@ -234,12 +446,26 @@ export const INITIAL_SKINS: SkinDefinition[] = [
     unlockType: 'coins',
     statBonus: '+8% Score & Frost Aura',
   },
+  {
+    id: 'abyssal_leviathan',
+    name: 'Abyssal Dragon',
+    category: 'mythical',
+    rarity: 'legendary',
+    modelType: 'dragon',
+    description: 'Ancient sea dragon slumbering under oceanic trenches, crowned with bioluminescent jade spines.',
+    primaryColor: '#059669',
+    secondaryColor: '#064e3b',
+    glowColor: '#6ee7b7',
+    gemPrice: 15,
+    unlockType: 'milestone',
+    statBonus: '+12% Score & Acid Trail',
+  },
 
-  // --- Sci-Fi / Cyberpunk ---
+  // --- Neon & Cyberpunk ---
   {
     id: 'cyber_neon',
     name: 'Cyberpunk V-1',
-    category: 'cyberpunk',
+    category: 'neon',
     rarity: 'rare',
     modelType: 'robot',
     description: 'Synthetic wireframe chassis with scanning laser visor and cyber antennae.',
@@ -252,7 +478,7 @@ export const INITIAL_SKINS: SkinDefinition[] = [
   {
     id: 'quantum_android',
     name: 'Quantum Mech',
-    category: 'cyberpunk',
+    category: 'neon',
     rarity: 'epic',
     modelType: 'robot',
     description: 'Heavy assault bipedal serpent head with neon exhaust manifolds and hexagonal plates.',
@@ -266,7 +492,7 @@ export const INITIAL_SKINS: SkinDefinition[] = [
   {
     id: 'mecha_hydra',
     name: 'Mecha Hydra Prime',
-    category: 'cyberpunk',
+    category: 'neon',
     rarity: 'legendary',
     modelType: 'robot',
     description: 'Autonomous super-dreadnought serpent with dual laser arrays and hyper-alloy plating.',
@@ -277,8 +503,22 @@ export const INITIAL_SKINS: SkinDefinition[] = [
     unlockType: 'milestone',
     statBonus: '+8% Score & Laser Trail',
   },
+  {
+    id: 'synth_overdrive',
+    name: 'Synth Overdrive',
+    category: 'neon',
+    rarity: 'legendary',
+    modelType: 'robot',
+    description: 'Pulsing synthwave equalizer serpent flashing with 80s arcade rhythm bars.',
+    primaryColor: '#f43f5e',
+    secondaryColor: '#8b5cf6',
+    glowColor: '#06b6d4',
+    gemPrice: 12,
+    unlockType: 'milestone',
+    statBonus: '+10% Drop-off Cash & Neon Trail',
+  },
 
-  // --- Tasty Foods ---
+  // --- Foods ---
   {
     id: 'watermelon_slither',
     name: 'Melon Crunch',
@@ -331,6 +571,7 @@ export const INITIAL_SKINS: SkinDefinition[] = [
     primaryColor: '#fbbf24',
     secondaryColor: '#d97706',
     glowColor: '#fef08a',
+    gemPrice: 20,
     unlockType: 'gacha',
     statBonus: '+8% Score & Gold Gleam',
   },
@@ -362,6 +603,314 @@ export const INITIAL_SKINS: SkinDefinition[] = [
     statBonus: '+5% Score Multiplier',
   },
 ];
+
+// ---------------------------------------------------------------------------
+// 100,000 SKINS PROCEDURAL GENERATION & VIRTUALIZATION ENGINE
+// ---------------------------------------------------------------------------
+export const TOTAL_SKINS_COUNT = 100000;
+export const PAGE_SIZE = 50;
+
+export const TOP_CATEGORIES = [
+  { id: 'all' as const, name: 'All Skins', emoji: '🌐', totalCount: 100000 },
+  { id: 'mythical' as const, name: 'Mythical', emoji: '🐉', totalCount: 18000, desc: 'Dragon & Wyrm Class' },
+  { id: 'creatures' as const, name: 'Creatures', emoji: '🦈', totalCount: 22000, desc: 'Shark, Eel, Yeti, Snowman' },
+  { id: 'vehicles' as const, name: 'Vehicles', emoji: '🎢', totalCount: 15000, desc: 'Roller Coaster Cars & Racers' },
+  { id: 'neon' as const, name: 'Neon', emoji: '🤖', totalCount: 20000, desc: 'Cyberpunk Mechas & Synths' },
+  { id: 'minimalist' as const, name: 'Minimalist', emoji: '🐍', totalCount: 12000, desc: 'Clean Monochrome & Classics' },
+  { id: 'foods' as const, name: 'Foods', emoji: '🍉', totalCount: 7000, desc: 'Melon, Donuts, Snack Snakes' },
+  { id: 'celestial' as const, name: 'Celestial', emoji: '✨', totalCount: 6000, desc: 'Imperial Gold & Solar Halos' },
+];
+
+const ADJECTIVES = [
+  'Mega', 'Ultra', 'Super', 'Hyper', 'Turbo', 'Giga', 'Nano', 'Cyber', 'Neon', 'Dark',
+  'Light', 'Void', 'Solar', 'Lunar', 'Frost', 'Magma', 'Toxic', 'Cosmic', 'Ancient', 'Prime',
+  'Shadow', 'Crystal', 'Phantom', 'Ghost', 'Infernal', 'Glacial', 'Plasma', 'Nuclear', 'Golden', 'Silver',
+  'Astral', 'Chrono', 'Titan', 'Vortex', 'Apex', 'Prismatic', 'Velvet', 'Quantum', 'Obsidian', 'Radiant'
+];
+
+const NAMES = [
+  'Viper', 'Cobra', 'Drake', 'Basilisk', 'Hydra', 'Serpent', 'Worm', 'Slither', 'Wraith', 'Phantom',
+  'Titan', 'Leviathan', 'Colossus', 'Dragon', 'Rex', 'Behemoth', 'Naga', 'Python', 'Anaconda', 'Boa',
+  'Shark', 'Eel', 'Coaster', 'Racer', 'Yeti', 'Snowman', 'Droid', 'Sentinel', 'Predator', 'Striker'
+];
+
+const PALETTES = [
+  { p: '#ef4444', s: '#991b1b', g: '#fca5a5' },
+  { p: '#f97316', s: '#9a3412', g: '#fdba74' },
+  { p: '#f59e0b', s: '#b45309', g: '#fde68a' },
+  { p: '#eab308', s: '#854d0e', g: '#fef08a' },
+  { p: '#84cc16', s: '#3f6212', g: '#bef264' },
+  { p: '#22c55e', s: '#15803d', g: '#86efac' },
+  { p: '#10b981', s: '#047857', g: '#6ee7b7' },
+  { p: '#06b6d4', s: '#0e7490', g: '#67e8f9' },
+  { p: '#0ea5e9', s: '#0369a1', g: '#7dd3fc' },
+  { p: '#3b82f6', s: '#1d4ed8', g: '#93c5fd' },
+  { p: '#6366f1', s: '#4338ca', g: '#a5b4fc' },
+  { p: '#8b5cf6', s: '#6d28d9', g: '#c4b5fd' },
+  { p: '#a855f7', s: '#7e22ce', g: '#d8b4fe' },
+  { p: '#d946ef', s: '#a21caf', g: '#f0abfc' },
+  { p: '#ec4899', s: '#be185d', g: '#f472b6' },
+  { p: '#f43f5e', s: '#9f1239', g: '#fda4af' },
+  { p: '#f8fafc', s: '#334155', g: '#ffffff' },
+  { p: '#0f172a', s: '#334155', g: '#38bdf8' },
+  { p: '#fbbf24', s: '#d97706', g: '#fef3c7' },
+  { p: '#14b8a6', s: '#0f766e', g: '#5eead4' },
+];
+
+const CATEGORY_KEYS: SkinCategory[] = [
+  'mythical',
+  'creatures',
+  'vehicles',
+  'neon',
+  'minimalist',
+  'foods',
+  'celestial',
+];
+
+/**
+ * Deterministically constructs skin data for any integer index in [1, 100000]
+ * without consuming memory or heap allocations.
+ */
+export function getProceduralSkin(index: number): SkinDefinition {
+  const clamped = Math.max(1, Math.min(TOTAL_SKINS_COUNT, Math.floor(index)));
+  const h1 = Math.abs((clamped * 15485863) ^ (clamped << 5));
+  const h2 = Math.abs((clamped * 32452843) ^ (clamped >> 3));
+  const h3 = Math.abs(clamped * 49979687);
+
+  const adj = ADJECTIVES[h1 % ADJECTIVES.length];
+  const noun = NAMES[h2 % NAMES.length];
+  const cat = CATEGORY_KEYS[(clamped - 1) % CATEGORY_KEYS.length];
+
+  // Pick model suitable for category
+  let model: SkinModelType = 'classic';
+  if (cat === 'mythical') {
+    model = (h3 % 4 === 0) ? 'celestial' : 'dragon';
+  } else if (cat === 'creatures') {
+    const creatureModels: SkinModelType[] = ['shark', 'electric_eel', 'yeti', 'snowman', 'cat'];
+    model = creatureModels[h3 % creatureModels.length];
+  } else if (cat === 'vehicles') {
+    model = 'roller_coaster';
+  } else if (cat === 'neon') {
+    model = 'robot';
+  } else if (cat === 'minimalist') {
+    model = 'classic';
+  } else if (cat === 'foods') {
+    model = 'food';
+  } else {
+    model = 'celestial';
+  }
+
+  const rarityRand = h1 % 100;
+  const rarity: SkinRarity =
+    rarityRand < 8 ? 'legendary' :
+    rarityRand < 25 ? 'epic' :
+    rarityRand < 55 ? 'rare' : 'common';
+
+  const pal = PALETTES[h1 % PALETTES.length];
+
+  // Currency & unlock criteria
+  const isGemSkin = clamped % 7 === 0; // ~14% cost diamonds (gems)
+  const isAdSkin = !isGemSkin && (clamped % 19 === 0);
+  const isMilestone = !isGemSkin && !isAdSkin && (clamped % 23 === 0);
+
+  let coinPrice: number | undefined;
+  let gemPrice: number | undefined;
+  let unlockType: SkinUnlockMethod = 'coins';
+  let requiredLevel: number | undefined;
+
+  if (isGemSkin) {
+    unlockType = 'milestone'; // Purchased via gems
+    gemPrice = 3 + (h2 % 22); // 3 to 24 diamonds
+  } else if (isAdSkin) {
+    unlockType = 'ad_watch';
+  } else if (isMilestone) {
+    unlockType = 'milestone';
+    requiredLevel = 2 + (h2 % 19);
+  } else {
+    unlockType = 'coins';
+    coinPrice = 250 + (h2 % 3200) + (rarity === 'legendary' ? 1200 : rarity === 'epic' ? 600 : 0);
+  }
+
+  const statBonus =
+    rarity === 'legendary'
+      ? `+12% ${['Speed Velocity', 'Magnet Radius', 'Drop-off Cash', 'Max HP'][h3 % 4]}`
+      : rarity === 'epic'
+      ? `+8% ${['Speed Velocity', 'Magnet Radius', 'Drop-off Cash', 'Score'][h3 % 4]}`
+      : rarity === 'rare'
+      ? `+5% ${['Score Multiplier', 'Magnet Aura', 'Speed Velocity'][h3 % 3]}`
+      : '+2% Score Multiplier';
+
+  return {
+    id: `proc_${clamped}`,
+    name: `${adj} ${noun} #${clamped}`,
+    category: cat,
+    rarity,
+    modelType: model,
+    description: `Catalog Skin #${clamped} of 100,000. Optimized lightweight ${rarity} grade ${cat} serpent.`,
+    primaryColor: pal.p,
+    secondaryColor: pal.s,
+    glowColor: pal.g,
+    coinPrice,
+    gemPrice,
+    requiredLevel,
+    unlockType,
+    statBonus,
+  };
+}
+
+/**
+ * High-performance O(1) skin resolver by ID.
+ * Accurately finds handcrafted skins or generates procedural skin by numeric ID.
+ */
+export function getSkinById(id: string): SkinDefinition {
+  const found = HANDCRAFTED_SKINS.find((s) => s.id === id);
+  if (found) return found;
+  if (id && id.startsWith('proc_')) {
+    const idx = parseInt(id.slice(5), 10);
+    if (!isNaN(idx) && idx >= 1 && idx <= TOTAL_SKINS_COUNT) {
+      return getProceduralSkin(idx);
+    }
+  }
+  return HANDCRAFTED_SKINS[0];
+}
+
+export interface SkinsQueryOptions {
+  category?: SkinCategory | 'all';
+  rarity?: SkinRarity | 'all';
+  searchQuery?: string;
+  minLevel?: number;
+  currencyFilter?: 'all' | 'coins' | 'gems' | 'ads';
+  page?: number;
+  pageSize?: number;
+}
+
+export interface SkinsQueryResult {
+  skins: SkinDefinition[];
+  totalCount: number;
+  totalPages: number;
+  currentPage: number;
+}
+
+/**
+ * Deterministic pagination & search query provider.
+ * Instantly provides a 50-item page for any of the 100,000 skins without
+ * loading 100,000 items into memory.
+ */
+export function querySkinsPage(options: SkinsQueryOptions = {}): SkinsQueryResult {
+  const {
+    category = 'all',
+    rarity = 'all',
+    searchQuery = '',
+    currencyFilter = 'all',
+    page = 1,
+    pageSize = PAGE_SIZE,
+  } = options;
+
+  const searchTrim = searchQuery.trim().toLowerCase();
+
+  // If user searched for a specific procedural number e.g. "429" or "proc_429"
+  if (searchTrim) {
+    const directMatch = searchTrim.replace('proc_', '').replace('#', '');
+    const directNum = parseInt(directMatch, 10);
+    if (!isNaN(directNum) && directNum >= 1 && directNum <= TOTAL_SKINS_COUNT) {
+      const skin = getProceduralSkin(directNum);
+      return {
+        skins: [skin],
+        totalCount: 1,
+        totalPages: 1,
+        currentPage: 1,
+      };
+    }
+  }
+
+  // Filter handcrafted skins matching filters
+  const filteredHandcrafted = HANDCRAFTED_SKINS.filter((s) => {
+    if (category !== 'all' && s.category !== category) return false;
+    if (rarity !== 'all' && s.rarity !== rarity) return false;
+    if (currencyFilter === 'coins' && !s.coinPrice) return false;
+    if (currencyFilter === 'gems' && !s.gemPrice) return false;
+    if (currencyFilter === 'ads' && s.unlockType !== 'ad_watch') return false;
+    if (searchTrim && !s.name.toLowerCase().includes(searchTrim) && !s.description.toLowerCase().includes(searchTrim)) {
+      return false;
+    }
+    return true;
+  });
+
+  // Calculate total procedural count matching this category
+  let proceduralTotal = TOTAL_SKINS_COUNT;
+  if (category !== 'all') {
+    const catIdx = CATEGORY_KEYS.indexOf(category);
+    if (catIdx !== -1) {
+      proceduralTotal = Math.floor(TOTAL_SKINS_COUNT / CATEGORY_KEYS.length);
+    }
+  }
+
+  // Estimate total items based on filters
+  let effectiveTotal = filteredHandcrafted.length + proceduralTotal;
+  if (rarity !== 'all') effectiveTotal = Math.floor(effectiveTotal * 0.25);
+  if (currencyFilter !== 'all') effectiveTotal = Math.floor(effectiveTotal * 0.3);
+  if (searchTrim) effectiveTotal = Math.min(effectiveTotal, 100);
+
+  const totalPages = Math.max(1, Math.ceil(effectiveTotal / pageSize));
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+  const startIndex = (currentPage - 1) * pageSize;
+
+  const resultSkins: SkinDefinition[] = [];
+
+  // Include handcrafted skins on early pages
+  if (startIndex < filteredHandcrafted.length) {
+    const end = Math.min(filteredHandcrafted.length, startIndex + pageSize);
+    for (let i = startIndex; i < end; i++) {
+      resultSkins.push(filteredHandcrafted[i]);
+    }
+  }
+
+  // Fill remainder of the 50 slots with deterministically computed procedural skins
+  let procSlot = Math.max(0, startIndex - filteredHandcrafted.length);
+  while (resultSkins.length < pageSize && procSlot < proceduralTotal) {
+    let procIndex = 1;
+    if (category === 'all') {
+      procIndex = procSlot + 1;
+    } else {
+      const catIdx = Math.max(0, CATEGORY_KEYS.indexOf(category));
+      procIndex = 1 + catIdx + procSlot * CATEGORY_KEYS.length;
+    }
+
+    if (procIndex <= TOTAL_SKINS_COUNT) {
+      const skin = getProceduralSkin(procIndex);
+      let match = true;
+      if (rarity !== 'all' && skin.rarity !== rarity) match = false;
+      if (currencyFilter === 'coins' && !skin.coinPrice) match = false;
+      if (currencyFilter === 'gems' && !skin.gemPrice) match = false;
+      if (currencyFilter === 'ads' && skin.unlockType !== 'ad_watch') match = false;
+      if (searchTrim && !skin.name.toLowerCase().includes(searchTrim)) match = false;
+
+      if (match) {
+        resultSkins.push(skin);
+      }
+    } else {
+      break;
+    }
+    procSlot++;
+    // Safety break to prevent long loops if strict filters are applied
+    if (procSlot > startIndex - filteredHandcrafted.length + 300) break;
+  }
+
+  return {
+    skins: resultSkins,
+    totalCount: effectiveTotal,
+    totalPages,
+    currentPage,
+  };
+}
+
+// Backward compatibility export with featured handcrafted skins + sample procedural skins
+export const INITIAL_SKINS: SkinDefinition[] = [
+  ...HANDCRAFTED_SKINS,
+  ...Array.from({ length: 60 }, (_, i) => getProceduralSkin(i + 1)),
+];
+
+
 
 export interface StageDefinition {
   id: number;
@@ -410,6 +959,8 @@ export interface GameStats {
   bossAlive: boolean;
   bossHp: number;
   bossMaxHp: number;
+  stageProgress: number; // 0 to 100%
+  bossPhase: number; // 1 or 2
 }
 
 export interface EvolutionTier {

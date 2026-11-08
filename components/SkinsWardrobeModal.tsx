@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import {
   X,
@@ -12,25 +12,35 @@ import {
   Play,
   Gift,
   Coins,
-  Layers,
   Award,
-  Zap,
-  TrendingUp,
   RotateCw,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Cpu,
+  Layers,
+  Filter,
 } from 'lucide-react';
 import {
-  INITIAL_SKINS,
+  TOP_CATEGORIES,
   COLLECTION_SETS,
   SkinDefinition,
   SkinCategory,
   SkinRarity,
   GACHA_BOX_COST,
+  TOTAL_SKINS_COUNT,
+  PAGE_SIZE,
+  getSkinById,
+  querySkinsPage,
 } from '@/lib/gameTypes';
 import { soundManager } from '@/lib/audio';
 import {
   buildSnakeProceduralHead,
   buildSnakeSegmentMesh,
 } from '@/lib/snakeModelBuilder';
+import { addressableManager } from '@/lib/addressables';
 
 interface SkinsWardrobeModalProps {
   isOpen: boolean;
@@ -40,14 +50,16 @@ interface SkinsWardrobeModalProps {
   unlockedSkinIds: string[];
   onUnlockSkin: (skinId: string) => void;
   coins?: number;
+  gems?: number;
   onDeductCoins?: (amount: number) => void;
+  onDeductGems?: (amount: number) => void;
   onAddCoins?: (amount: number) => void;
   playerLevel?: number;
   currentStageId?: number;
 }
 
 // -------------------------------------------------------------
-// INTERACTIVE 3D PREVIEW CANVAS (THE GARAGE STAGE)
+// ASYNCHRONOUS ADDRESSABLES 3D PREVIEW CANVAS (THE GARAGE STAGE)
 // -------------------------------------------------------------
 function Skin3DPreviewCanvas({ skin }: { skin: SkinDefinition }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -202,7 +214,6 @@ function Skin3DPreviewCanvas({ skin }: { skin: SkinDefinition }) {
     };
     animate();
 
-    // Resize observer
     const handleResize = () => {
       if (!container) return;
       const newW = container.clientWidth;
@@ -222,6 +233,11 @@ function Skin3DPreviewCanvas({ skin }: { skin: SkinDefinition }) {
       elem.removeEventListener('touchstart', handlePointerDown);
       window.removeEventListener('touchmove', handlePointerMove);
       window.removeEventListener('touchend', handlePointerUp);
+
+      // Strict Addressables Unload & GPU VRAM disposal
+      addressableManager.unloadAssetGroup(snakeGroup);
+      addressableManager.unloadAssetGroup(platformGroup);
+      scene.clear();
       renderer.dispose();
       if (renderer.domElement.parentNode) {
         renderer.domElement.parentNode.removeChild(renderer.domElement);
@@ -232,7 +248,7 @@ function Skin3DPreviewCanvas({ skin }: { skin: SkinDefinition }) {
   return (
     <div className="relative w-full h-full min-h-[220px] rounded-2xl bg-gradient-to-b from-slate-900/90 to-slate-950/90 border border-slate-800 overflow-hidden flex items-center justify-center">
       <div ref={containerRef} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing" />
-      <div className="absolute bottom-2.5 left-3 flex items-center gap-1.5 pointer-events-none text-[11px] font-semibold text-slate-400 bg-slate-900/70 px-2 py-0.5 rounded-full border border-slate-700/60 backdrop-blur-sm">
+      <div className="absolute bottom-2.5 left-3 flex items-center gap-1.5 pointer-events-none text-[11px] font-semibold text-slate-400 bg-slate-900/80 px-2 py-0.5 rounded-full border border-slate-700/60 backdrop-blur-sm shadow-md">
         <RotateCw className="h-3 w-3 text-cyan-400 animate-spin" style={{ animationDuration: '6s' }} />
         <span>Drag to rotate 360°</span>
       </div>
@@ -241,7 +257,7 @@ function Skin3DPreviewCanvas({ skin }: { skin: SkinDefinition }) {
 }
 
 // -------------------------------------------------------------
-// MAIN SKINS WARDROBE / GARAGE MODAL
+// MAIN SKINS WARDROBE / 100,000+ SHOP MODAL
 // -------------------------------------------------------------
 export default function SkinsWardrobeModal({
   isOpen,
@@ -251,15 +267,28 @@ export default function SkinsWardrobeModal({
   unlockedSkinIds,
   onUnlockSkin,
   coins = 0,
+  gems = 0,
   onDeductCoins,
+  onDeductGems,
   onAddCoins,
   playerLevel = 1,
   currentStageId = 1,
 }: SkinsWardrobeModalProps) {
-  // Navigation & Selected Skin
+  // Navigation & Category Filtering
   const [selectedCategory, setSelectedCategory] = useState<SkinCategory | 'all'>('all');
   const [selectedRarity, setSelectedRarity] = useState<SkinRarity | 'all'>('all');
+  const [currencyFilter, setCurrencyFilter] = useState<'all' | 'coins' | 'gems' | 'ads'>('all');
+  const [searchQuery, setSearchBarQuery] = useState('');
   const [selectedPreviewSkinId, setSelectedPreviewSkinId] = useState<string | null>(null);
+
+  // Pagination state (50 items per view)
+  const [page, setPage] = useState(1);
+  const [jumpPageInput, setJumpPageInput] = useState('1');
+
+  // Virtual Recycler View state (visiblePoolSize = 20)
+  const recyclerScrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [columnCount, setColumnCount] = useState(3);
 
   // Ad-Watch State
   const [adWatchingSkinId, setAdWatchingSkinId] = useState<string | null>(null);
@@ -271,14 +300,86 @@ export default function SkinsWardrobeModal({
   const [gachaResultSkin, setGachaResultSkin] = useState<SkinDefinition | null>(null);
   const [gachaIsDuplicate, setGachaIsDuplicate] = useState(false);
 
+  // Explicit page change handler to prevent cascading renders
+  const changePage = (newPage: number) => {
+    setPage(newPage);
+    setJumpPageInput(String(newPage));
+    if (recyclerScrollRef.current) {
+      recyclerScrollRef.current.scrollTop = 0;
+    }
+  };
+
+  const handleSelectCategory = (catId: SkinCategory | 'all') => {
+    setSelectedCategory(catId);
+    changePage(1);
+  };
+
+  const handleSelectRarity = (rar: SkinRarity | 'all') => {
+    setSelectedRarity(rar);
+    changePage(1);
+  };
+
+  const handleSelectCurrency = (cur: 'all' | 'coins' | 'gems' | 'ads') => {
+    setCurrencyFilter(cur);
+    changePage(1);
+  };
+
+  const handleSearchChange = (val: string) => {
+    setSearchBarQuery(val);
+    changePage(1);
+  };
+
+  // Dynamic column calculation for Virtual Recycler Grid
+  useEffect(() => {
+    const updateColumns = () => {
+      if (!recyclerScrollRef.current) return;
+      const w = recyclerScrollRef.current.clientWidth;
+      if (w < 480) setColumnCount(1);
+      else if (w < 720) setColumnCount(2);
+      else setColumnCount(3);
+    };
+
+    updateColumns();
+    window.addEventListener('resize', updateColumns);
+    return () => window.removeEventListener('resize', updateColumns);
+  }, [isOpen]);
+
+  // High-speed deterministic 50-item query
+  const queryResult = useMemo(() => {
+    return querySkinsPage({
+      category: selectedCategory,
+      rarity: selectedRarity,
+      searchQuery,
+      currencyFilter,
+      page,
+      pageSize: PAGE_SIZE,
+    });
+  }, [selectedCategory, selectedRarity, searchQuery, currencyFilter, page]);
+
   // Derived active preview skin (defaults to equippedSkinId)
   const activePreviewSkinId = selectedPreviewSkinId || equippedSkinId;
+  const previewSkin = useMemo(() => {
+    return getSkinById(activePreviewSkinId);
+  }, [activePreviewSkinId]);
 
-  // Active preview skin definition
-  const previewSkin =
-    INITIAL_SKINS.find((s) => s.id === activePreviewSkinId) ||
-    INITIAL_SKINS.find((s) => s.id === equippedSkinId) ||
-    INITIAL_SKINS[0];
+  // Addressables & Recycler View Slicing (visiblePoolSize = 20 active cards maximum)
+  const CARD_ROW_HEIGHT = 114;
+  const totalItems = queryResult.skins.length;
+  const totalRows = Math.ceil(totalItems / columnCount);
+  const visibleRowStart = Math.max(0, Math.floor(scrollTop / CARD_ROW_HEIGHT) - 1);
+  const visibleRowEnd = Math.min(totalRows, Math.ceil((scrollTop + 460) / CARD_ROW_HEIGHT) + 1);
+
+  const startIndex = visibleRowStart * columnCount;
+  const endIndex = Math.min(totalItems, visibleRowEnd * columnCount);
+
+  // Strictly cap the active rendered slots to 20 maximum as per Unity C# Recycler View specification!
+  const visibleSkins = queryResult.skins.slice(
+    startIndex,
+    Math.min(startIndex + 20, endIndex)
+  );
+
+  const topPadding = visibleRowStart * CARD_ROW_HEIGHT;
+  const bottomPadding = Math.max(0, (totalRows - visibleRowEnd) * CARD_ROW_HEIGHT);
 
   // Simulated 5-second reward ad countdown
   useEffect(() => {
@@ -306,7 +407,7 @@ export default function SkinsWardrobeModal({
     setAdCountdown(5);
   };
 
-  // Soft currency purchase handler
+  // Soft currency purchase handler (coins)
   const handleBuyWithCoins = (skin: SkinDefinition) => {
     if (!skin.coinPrice) return;
     if (coins < skin.coinPrice) {
@@ -314,6 +415,19 @@ export default function SkinsWardrobeModal({
       return;
     }
     onDeductCoins?.(skin.coinPrice);
+    onUnlockSkin(skin.id);
+    onEquipSkin(skin.id);
+    soundManager.playEquip();
+  };
+
+  // Hard currency purchase handler (diamonds/gems awarded from 3-4 kills)
+  const handleBuyWithGems = (skin: SkinDefinition) => {
+    if (!skin.gemPrice) return;
+    if (gems < skin.gemPrice) {
+      soundManager.playWallHit();
+      return;
+    }
+    onDeductGems?.(skin.gemPrice);
     onUnlockSkin(skin.id);
     onEquipSkin(skin.id);
     soundManager.playEquip();
@@ -331,25 +445,21 @@ export default function SkinsWardrobeModal({
     setGachaStep('shaking');
     soundManager.playGachaOpen();
 
-    // Roll random skin with rarity weighting:
-    // Common: 45%, Rare: 30%, Epic: 18%, Legendary: 7%
     const rand = Math.random();
     let targetRarity: SkinRarity = 'common';
-    if (rand < 0.07) targetRarity = 'legendary';
+    if (rand < 0.08) targetRarity = 'legendary';
     else if (rand < 0.25) targetRarity = 'epic';
     else if (rand < 0.55) targetRarity = 'rare';
     else targetRarity = 'common';
 
-    const candidates = INITIAL_SKINS.filter((s) => s.rarity === targetRarity);
-    const rolled =
-      candidates[Math.floor(Math.random() * candidates.length)] ||
-      INITIAL_SKINS[Math.floor(Math.random() * INITIAL_SKINS.length)];
+    // Random roll from query pool or procedural
+    const randomIdx = Math.floor(Math.random() * 200) + 1;
+    const rolled = getSkinById(`proc_${randomIdx}`);
 
     const isDup = unlockedSkinIds.includes(rolled.id);
     setGachaResultSkin(rolled);
     setGachaIsDuplicate(isDup);
 
-    // Sequence timing
     setTimeout(() => {
       setGachaStep('burst');
     }, 1100);
@@ -363,7 +473,6 @@ export default function SkinsWardrobeModal({
       }
 
       if (isDup) {
-        // Refund 200 coins
         onAddCoins?.(200);
       } else {
         onUnlockSkin(rolled.id);
@@ -371,64 +480,93 @@ export default function SkinsWardrobeModal({
     }, 1900);
   };
 
-  // Filter skins
-  const filteredSkins = INITIAL_SKINS.filter((s) => {
-    if (selectedCategory !== 'all' && s.category !== selectedCategory) return false;
-    if (selectedRarity !== 'all' && s.rarity !== selectedRarity) return false;
-    return true;
-  });
+  // Handle direct page jump submission
+  const handleJumpPageSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = parseInt(jumpPageInput, 10);
+    if (!isNaN(target) && target >= 1 && target <= queryResult.totalPages) {
+      changePage(target);
+    } else {
+      setJumpPageInput(String(page));
+    }
+  };
 
-  // Calculate active collection perk for the currently selected category
+  // Left & Right 3D Stage preview arrows handler
+  const handlePreviewPrev = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const skinsList = queryResult.skins;
+    if (skinsList.length === 0) return;
+    const idx = skinsList.findIndex((s) => s.id === previewSkin.id);
+    const prevIdx = (idx - 1 + skinsList.length) % skinsList.length;
+    setSelectedPreviewSkinId(skinsList[prevIdx].id);
+  };
+
+  const handlePreviewNext = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const skinsList = queryResult.skins;
+    if (skinsList.length === 0) return;
+    const idx = skinsList.findIndex((s) => s.id === previewSkin.id);
+    const nextIdx = (idx + 1) % skinsList.length;
+    setSelectedPreviewSkinId(skinsList[nextIdx].id);
+  };
+
+  // Calculate active collection set perk for the selected category
   const activeCategorySet = COLLECTION_SETS.find((cs) => cs.id === selectedCategory);
-  const categorySkins = activeCategorySet
-    ? INITIAL_SKINS.filter((s) => s.category === activeCategorySet.id)
-    : [];
-  const categoryOwnedCount = categorySkins.filter((s) =>
-    unlockedSkinIds.includes(s.id)
-  ).length;
-  const isCategoryComplete =
-    categorySkins.length > 0 && categoryOwnedCount === categorySkins.length;
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-2 sm:p-4 backdrop-blur-md">
-      <div className="relative w-full max-w-5xl h-[92vh] max-h-[900px] overflow-hidden rounded-3xl border border-slate-700 bg-slate-900 shadow-2xl flex flex-col">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-2 sm:p-4 backdrop-blur-md cursor-pointer"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-6xl h-[92vh] max-h-[920px] overflow-hidden rounded-3xl border border-slate-700 bg-slate-900 shadow-2xl flex flex-col cursor-default"
+      >
         {/* Top Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-950/40">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-950/50">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shadow-lg shadow-cyan-500/10">
               <Sparkles className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-black tracking-wide text-slate-100">
-                  SERPENT WARDROBE & GARAGE
+                <h2 className="text-base sm:text-lg font-black tracking-wide text-slate-100">
+                  100,000+ SERPENT SKIN SHOP
                 </h2>
-                <span className="text-[11px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-cyan-950 border border-cyan-500/40 text-cyan-300">
-                  3D Preview
+                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-cyan-950 border border-cyan-500/40 text-cyan-300">
+                  Addressables & Recycler UI
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Collect theme sets to activate permanent passive stat bonuses!
+                Preview with Left/Right arrows · Buy with Coins 🪙 or Diamonds 💎 (from 3–4 kills)
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Coins Pill */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-300 text-xs font-black shadow-inner">
-              <Coins className="h-4 w-4 text-amber-400" />
-              <span>{coins.toLocaleString()}</span>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-300 text-xs font-black shadow-inner">
+                <Coins className="h-4 w-4 text-amber-400" />
+                <span>{coins.toLocaleString()}</span>
+              </div>
+              <div
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 text-xs font-black shadow-inner"
+                title="Diamonds are awarded when achieving 3-4 kills in match combat!"
+              >
+                <Sparkles className="h-4 w-4 text-cyan-400" />
+                <span>{gems.toLocaleString()} 💎</span>
+              </div>
             </div>
 
             {/* Mystery Box CTA Button */}
             <button
               onClick={handleOpenMysteryBox}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 text-slate-100 text-xs font-extrabold hover:brightness-110 active:scale-95 transition shadow-md shadow-purple-500/20"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 text-slate-100 text-xs font-extrabold hover:brightness-110 active:scale-95 transition shadow-md shadow-purple-500/20"
             >
               <Gift className="h-4 w-4 text-amber-300 animate-bounce" />
-              <span className="hidden sm:inline">Mystery Crate</span>
+              <span>Mystery Crate</span>
               <span className="bg-slate-900/60 px-1.5 py-0.5 rounded text-[10px] text-amber-300">
                 {GACHA_BOX_COST} 🪙
               </span>
@@ -444,20 +582,59 @@ export default function SkinsWardrobeModal({
           </div>
         </div>
 
-        {/* Content Layout: Left 3D Stage & Details (40%), Right Catalog (60%) */}
+        {/* Content Layout: Left 3D Stage & Details (40%), Right Catalog & Recycler Grid (60%) */}
         <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
-          {/* LEFT: 3D Stage & Active Skin Stats */}
-          <div className="w-full md:w-[42%] border-b md:border-b-0 md:border-r border-slate-800 p-4 flex flex-col justify-between overflow-y-auto bg-slate-950/30">
+          {/* ========================================================= */}
+          {/* LEFT: 3D Stage & Active Skin Stats with Left/Right Arrows */}
+          {/* ========================================================= */}
+          <div className="w-full md:w-[40%] border-b md:border-b-0 md:border-r border-slate-800 p-4 flex flex-col justify-between overflow-y-auto bg-slate-950/30">
             <div>
-              {/* 3D Interactive Stage Canvas */}
-              <div className="h-48 sm:h-64 mb-3">
+              {/* 3D Interactive Stage Canvas with Prominent Preview Arrows */}
+              <div className="relative h-48 sm:h-64 mb-3 rounded-2xl overflow-hidden shadow-inner border border-slate-800">
                 <Skin3DPreviewCanvas skin={previewSkin} />
+
+                {/* Left Preview Arrow Button */}
+                <button
+                  onClick={handlePreviewPrev}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 p-2.5 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-700/80 text-slate-100 shadow-xl transition-all active:scale-90 flex items-center justify-center group"
+                  title="Preview Previous Skin"
+                >
+                  <ChevronLeft className="h-5 w-5 text-cyan-400 group-hover:-translate-x-0.5 transition-transform" />
+                </button>
+
+                {/* Right Preview Arrow Button */}
+                <button
+                  onClick={handlePreviewNext}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-2.5 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-700/80 text-slate-100 shadow-xl transition-all active:scale-90 flex items-center justify-center group"
+                  title="Preview Next Skin"
+                >
+                  <ChevronRight className="h-5 w-5 text-cyan-400 group-hover:translate-x-0.5 transition-transform" />
+                </button>
+
+                {/* Currency Badge on Stage Overlay */}
+                <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/80 border border-slate-700 backdrop-blur-sm text-xs font-black shadow-lg">
+                  {previewSkin.coinPrice ? (
+                    <span className="text-amber-400 flex items-center gap-1">
+                      <Coins className="h-3.5 w-3.5" /> {previewSkin.coinPrice.toLocaleString()} 🪙
+                    </span>
+                  ) : previewSkin.gemPrice ? (
+                    <span className="text-cyan-300 flex items-center gap-1">
+                      <Sparkles className="h-3.5 w-3.5" /> {previewSkin.gemPrice} 💎
+                    </span>
+                  ) : previewSkin.unlockType === 'ad_watch' ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <Tv className="h-3.5 w-3.5" /> Free Ad
+                    </span>
+                  ) : (
+                    <span className="text-purple-300">Milestone</span>
+                  )}
+                </div>
               </div>
 
               {/* Skin Title & Rarity Card */}
               <div className="flex items-start justify-between mb-2">
                 <div>
-                  <h3 className="text-lg font-black text-slate-100">
+                  <h3 className="text-base sm:text-lg font-black text-slate-100">
                     {previewSkin.name}
                   </h3>
                   <div className="flex items-center gap-2 mt-0.5">
@@ -475,7 +652,7 @@ export default function SkinsWardrobeModal({
                       {previewSkin.rarity}
                     </span>
                     <span className="text-xs text-slate-400 capitalize">
-                      {previewSkin.modelType} Class
+                      {previewSkin.modelType} Class · {previewSkin.category}
                     </span>
                   </div>
                 </div>
@@ -509,7 +686,7 @@ export default function SkinsWardrobeModal({
                 <div className="flex items-center gap-2">
                   <Award className="h-4 w-4 text-cyan-400" />
                   <span className="text-xs font-bold text-slate-200">
-                    Skin Perk:
+                    Passive Perk:
                   </span>
                 </div>
                 <span className="text-xs font-black text-cyan-300">
@@ -521,7 +698,7 @@ export default function SkinsWardrobeModal({
             {/* Bottom Action for Selected Skin */}
             <div className="pt-2">
               {equippedSkinId === previewSkin.id ? (
-                <div className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 text-xs font-black">
+                <div className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 text-xs font-black shadow-inner">
                   <Check className="h-4 w-4" /> CURRENTLY EQUIPPED
                 </div>
               ) : unlockedSkinIds.includes(previewSkin.id) ? (
@@ -534,7 +711,22 @@ export default function SkinsWardrobeModal({
                 >
                   Equip This Skin
                 </button>
-              ) : previewSkin.unlockType === 'coins' && previewSkin.coinPrice ? (
+              ) : previewSkin.gemPrice ? (
+                <button
+                  onClick={() => handleBuyWithGems(previewSkin)}
+                  disabled={gems < previewSkin.gemPrice}
+                  className={`w-full py-2.5 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition ${
+                    gems >= previewSkin.gemPrice
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-slate-950 hover:brightness-110 active:scale-98 shadow-lg shadow-cyan-500/20'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                  }`}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {gems >= previewSkin.gemPrice
+                    ? `Buy for ${previewSkin.gemPrice} 💎 Diamonds`
+                    : `Need ${previewSkin.gemPrice - gems} More 💎 (Earn via 3-4 Kills)`}
+                </button>
+              ) : previewSkin.coinPrice ? (
                 <button
                   onClick={() => handleBuyWithCoins(previewSkin)}
                   disabled={coins < previewSkin.coinPrice}
@@ -546,8 +738,8 @@ export default function SkinsWardrobeModal({
                 >
                   <Coins className="h-4 w-4" />
                   {coins >= previewSkin.coinPrice
-                    ? `Buy for ${previewSkin.coinPrice} 🪙`
-                    : `Need ${previewSkin.coinPrice - coins} More 🪙`}
+                    ? `Buy for ${previewSkin.coinPrice.toLocaleString()} 🪙 Coins`
+                    : `Need ${(previewSkin.coinPrice - coins).toLocaleString()} More 🪙`}
                 </button>
               ) : previewSkin.unlockType === 'ad_watch' ? (
                 <button
@@ -609,227 +801,366 @@ export default function SkinsWardrobeModal({
             </div>
           </div>
 
-          {/* RIGHT: Categories, Set Perks Bar, and Skin Grid (58%) */}
-          <div className="flex-1 flex flex-col min-h-0 p-4 overflow-hidden">
-            {/* Themed Categories Tabs */}
+          {/* ========================================================= */}
+          {/* RIGHT: Top Categories Tabs, Filter Bar, Virtual Recycler Grid */}
+          {/* ========================================================= */}
+          <div className="flex-1 flex flex-col min-h-0 p-3 sm:p-4 overflow-hidden">
+            {/* Top Categories Tabs: Mythical, Creatures, Vehicles, Neon, Minimalist, etc. */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none shrink-0">
-              <button
-                onClick={() => setSelectedCategory('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition ${
-                  selectedCategory === 'all'
-                    ? 'bg-slate-100 text-slate-950 shadow-md'
-                    : 'bg-slate-800/80 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
-                }`}
-              >
-                All Skins ({INITIAL_SKINS.length})
-              </button>
-
-              {COLLECTION_SETS.map((cs) => {
-                const isSelected = selectedCategory === cs.id;
-                const setSkins = INITIAL_SKINS.filter((s) => s.category === cs.id);
-                const ownedCount = setSkins.filter((s) =>
-                  unlockedSkinIds.includes(s.id)
-                ).length;
-                const isComplete = ownedCount === setSkins.length;
+              {TOP_CATEGORIES.map((cat) => {
+                const isSelected = selectedCategory === cat.id;
 
                 return (
                   <button
-                    key={cs.id}
-                    onClick={() => setSelectedCategory(cs.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition ${
+                    key={cat.id}
+                    onClick={() => handleSelectCategory(cat.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
                       isSelected
-                        ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
-                        : isComplete
-                        ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
+                        ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20 scale-102'
                         : 'bg-slate-800/80 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
                     }`}
                   >
-                    <span>{cs.emoji}</span>
-                    <span>{cs.name}</span>
+                    <span>{cat.emoji}</span>
+                    <span>{cat.name}</span>
                     <span
                       className={`text-[10px] px-1.5 py-0.2 rounded-full ${
                         isSelected
-                          ? 'bg-slate-950/40 text-slate-900'
+                          ? 'bg-slate-950/40 text-slate-900 font-black'
                           : 'bg-slate-900 text-slate-400'
                       }`}
                     >
-                      {ownedCount}/{setSkins.length}
+                      {cat.totalCount.toLocaleString()}
                     </span>
                   </button>
                 );
               })}
             </div>
 
-            {/* Collection Set Perk Banner (Shown when a category is selected) */}
+            {/* Collection Set Perk Banner (When specific category tab is selected) */}
             {activeCategorySet && (
-              <div
-                className={`my-2 p-3 rounded-2xl border transition shrink-0 ${
-                  isCategoryComplete
-                    ? 'bg-emerald-950/50 border-emerald-500/50 shadow-lg shadow-emerald-500/10'
-                    : 'bg-slate-950/60 border-slate-800'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">{activeCategorySet.emoji}</span>
-                    <span className="text-xs font-black text-slate-200">
-                      {activeCategorySet.name} Collection Perk:
+              <div className="my-1.5 p-2.5 rounded-2xl border border-slate-800 bg-slate-950/60 shrink-0 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">{activeCategorySet.emoji}</span>
+                  <div>
+                    <span className="text-xs font-black text-slate-200 mr-2">
+                      {activeCategorySet.name} Theme Perk:
                     </span>
                     <span className="text-xs font-extrabold text-cyan-300">
                       {activeCategorySet.perkTitle}
                     </span>
                   </div>
-
-                  {isCategoryComplete ? (
-                    <span className="flex items-center gap-1 text-[11px] font-black text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded-full border border-emerald-500/40">
-                      <Check className="h-3 w-3" /> SET PERK ACTIVE
-                    </span>
-                  ) : (
-                    <span className="text-[11px] font-bold text-amber-400">
-                      {categoryOwnedCount}/{categorySkins.length} Owned
-                    </span>
-                  )}
                 </div>
-
-                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mb-1">
-                  <div
-                    className={`h-full transition-all duration-500 ${
-                      isCategoryComplete ? 'bg-emerald-400' : 'bg-cyan-500'
-                    }`}
-                    style={{
-                      width: `${(categoryOwnedCount / categorySkins.length) * 100}%`,
-                    }}
-                  />
-                </div>
-
-                <p className="text-[11px] text-slate-400">
+                <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
                   {activeCategorySet.perkDescription}
-                </p>
+                </span>
               </div>
             )}
 
-            {/* Rarity Filter Chips */}
-            <div className="flex items-center gap-1.5 py-1 shrink-0">
-              <span className="text-[11px] font-bold text-slate-500 uppercase mr-1">
-                Rarity:
-              </span>
-              {(['all', 'common', 'rare', 'epic', 'legendary'] as const).map(
-                (rarity) => (
+            {/* Search, Rarity, and Currency Filter Bar */}
+            <div className="flex flex-col sm:flex-row items-center gap-2 py-1.5 shrink-0">
+              {/* Search Bar with instant #number jump */}
+              <div className="relative flex-1 w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Search 100,000 skins by name, class, or number (e.g. Shark, Coaster, #429)..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  className="w-full bg-slate-800/80 border border-slate-700 rounded-xl py-1.5 pl-9 pr-8 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition"
+                />
+                {searchQuery && (
                   <button
-                    key={rarity}
-                    onClick={() => setSelectedRarity(rarity)}
-                    className={`px-2.5 py-0.5 rounded-lg text-[11px] font-extrabold capitalize transition ${
-                      selectedRarity === rarity
-                        ? 'bg-slate-200 text-slate-950'
-                        : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
-                    }`}
+                    onClick={() => handleSearchChange('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs"
                   >
-                    {rarity}
+                    ✕
                   </button>
-                )
+                )}
+              </div>
+
+              {/* Rarity Filter */}
+              <div className="flex items-center gap-1 shrink-0">
+                {(['all', 'common', 'rare', 'epic', 'legendary'] as const).map(
+                  (rarity) => (
+                    <button
+                      key={rarity}
+                      onClick={() => handleSelectRarity(rarity)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-black capitalize transition ${
+                        selectedRarity === rarity
+                          ? 'bg-slate-200 text-slate-950 shadow'
+                          : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {rarity}
+                    </button>
+                  )
+                )}
+              </div>
+
+              {/* Currency Filter */}
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => handleSelectCurrency('all')}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-black transition ${
+                    currencyFilter === 'all'
+                      ? 'bg-slate-200 text-slate-950'
+                      : 'bg-slate-800/60 text-slate-400'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => handleSelectCurrency('coins')}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-0.5 ${
+                    currencyFilter === 'coins'
+                      ? 'bg-amber-400 text-slate-950 font-black'
+                      : 'bg-slate-800/60 text-amber-300'
+                  }`}
+                >
+                  🪙 Coins
+                </button>
+                <button
+                  onClick={() => handleSelectCurrency('gems')}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-0.5 ${
+                    currencyFilter === 'gems'
+                      ? 'bg-cyan-400 text-slate-950 font-black'
+                      : 'bg-slate-800/60 text-cyan-300'
+                  }`}
+                  title="Diamonds awarded from 3-4 kills"
+                >
+                  💎 Gems
+                </button>
+                <button
+                  onClick={() => handleSelectCurrency('ads')}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-black transition flex items-center gap-0.5 ${
+                    currencyFilter === 'ads'
+                      ? 'bg-emerald-400 text-slate-950 font-black'
+                      : 'bg-slate-800/60 text-emerald-300'
+                  }`}
+                >
+                  📺 Free
+                </button>
+              </div>
+            </div>
+
+            {/* ========================================================= */}
+            {/* VIRTUAL SCROLL RECYCLER GRID (visiblePoolSize = 20) */}
+            {/* ========================================================= */}
+            <div
+              ref={recyclerScrollRef}
+              onScroll={(e) => {
+                setScrollTop(e.currentTarget.scrollTop);
+                addressableManager.recordCardRecycle();
+              }}
+              className="flex-1 overflow-y-auto pr-1 py-1"
+            >
+              {queryResult.skins.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-500 py-12">
+                  <Filter className="h-10 w-10 mb-2 opacity-50 text-cyan-400" />
+                  <p className="text-sm font-bold text-slate-300">No skins matched your filter</p>
+                  <p className="text-xs text-slate-500 mt-1">Try resetting the search or filters</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  {/* Top Spacer for virtual scroll virtualization */}
+                  {topPadding > 0 && (
+                    <div
+                      style={{ height: topPadding }}
+                      className="col-span-full w-full pointer-events-none"
+                    />
+                  )}
+
+                  {/* Active Recycled Cards (Max 20 cards active simultaneously) */}
+                  {visibleSkins.map((skin) => {
+                    const isUnlocked = unlockedSkinIds.includes(skin.id);
+                    const isEquipped = equippedSkinId === skin.id;
+                    const isSelected = activePreviewSkinId === skin.id;
+
+                    return (
+                      <div
+                        key={skin.id}
+                        onClick={() => setSelectedPreviewSkinId(skin.id)}
+                        className={`relative cursor-pointer rounded-2xl border p-2.5 sm:p-3 flex flex-col justify-between transition-all select-none ${
+                          isSelected
+                            ? 'border-cyan-400 bg-slate-800/90 ring-2 ring-cyan-500/30 shadow-lg shadow-cyan-500/10'
+                            : isEquipped
+                            ? 'border-emerald-500/60 bg-slate-900/80'
+                            : isUnlocked
+                            ? 'border-slate-700 bg-slate-900/60 hover:border-slate-600'
+                            : 'border-slate-800 bg-slate-950/60 opacity-80 hover:opacity-100 hover:border-slate-700'
+                        }`}
+                        style={{ height: 104 }}
+                      >
+                        <div>
+                          {/* Card Top: Palette Swatch + Name + Badges */}
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-1.5 overflow-hidden">
+                              <div className="flex -space-x-1 shrink-0">
+                                <div
+                                  className="h-4 w-4 rounded-full border border-slate-900 shadow"
+                                  style={{ backgroundColor: skin.primaryColor }}
+                                />
+                                <div
+                                  className="h-4 w-4 rounded-full border border-slate-900 shadow"
+                                  style={{ backgroundColor: skin.secondaryColor }}
+                                />
+                                <div
+                                  className="h-4 w-4 rounded-full border border-slate-900 shadow"
+                                  style={{ backgroundColor: skin.glowColor }}
+                                />
+                              </div>
+                              <span className="font-black text-xs text-slate-200 truncate">
+                                {skin.name}
+                              </span>
+                            </div>
+
+                            {/* Rarity Badge */}
+                            <span
+                              className={`text-[9px] uppercase font-black px-1.5 py-0.2 rounded border shrink-0 ${
+                                skin.rarity === 'legendary'
+                                  ? 'border-amber-500/60 bg-amber-950/70 text-amber-300'
+                                  : skin.rarity === 'epic'
+                                  ? 'border-purple-500/60 bg-purple-950/70 text-purple-300'
+                                  : skin.rarity === 'rare'
+                                  ? 'border-cyan-500/60 bg-cyan-950/70 text-cyan-300'
+                                  : 'border-slate-600 bg-slate-800 text-emerald-400'
+                              }`}
+                            >
+                              {skin.rarity}
+                            </span>
+                          </div>
+
+                          <p className="text-[10px] text-slate-400 line-clamp-1 leading-tight">
+                            {skin.description}
+                          </p>
+                        </div>
+
+                        {/* Card Bottom: Perk & Price */}
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
+                          <span className="text-[9px] font-bold text-slate-400 truncate max-w-[110px]">
+                            {skin.statBonus}
+                          </span>
+
+                          {isEquipped ? (
+                            <span className="text-[10px] font-black text-cyan-400 flex items-center gap-0.5">
+                              <Check className="h-3 w-3" /> Equipped
+                            </span>
+                          ) : isUnlocked ? (
+                            <span className="text-[10px] font-black text-emerald-400">
+                              Owned
+                            </span>
+                          ) : skin.gemPrice ? (
+                            <span className="text-[10px] font-black text-cyan-300 flex items-center gap-0.5">
+                              <Sparkles className="h-2.5 w-2.5" /> {skin.gemPrice} 💎
+                            </span>
+                          ) : skin.coinPrice ? (
+                            <span className="text-[10px] font-black text-amber-400">
+                              {skin.coinPrice.toLocaleString()} 🪙
+                            </span>
+                          ) : skin.unlockType === 'ad_watch' ? (
+                            <span className="text-[10px] font-black text-cyan-300 flex items-center gap-0.5">
+                              <Tv className="h-2.5 w-2.5" /> Free Ad
+                            </span>
+                          ) : skin.unlockType === 'milestone' ? (
+                            <span className="text-[10px] font-bold text-slate-400">
+                              Lvl {skin.requiredLevel}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-purple-400">
+                              Boss Crate
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Bottom Spacer for virtual scroll virtualization */}
+                  {bottomPadding > 0 && (
+                    <div
+                      style={{ height: bottomPadding }}
+                      className="col-span-full w-full pointer-events-none"
+                    />
+                  )}
+                </div>
               )}
             </div>
 
-            {/* Skins Grid */}
-            <div className="flex-1 overflow-y-auto pr-1 py-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-              {filteredSkins.map((skin) => {
-                const isUnlocked = unlockedSkinIds.includes(skin.id);
-                const isEquipped = equippedSkinId === skin.id;
-                const isSelected = activePreviewSkinId === skin.id;
+            {/* ========================================================= */}
+            {/* CATEGORY PAGINATION CONTROLS BAR (50 ITEMS PER PAGE) */}
+            {/* ========================================================= */}
+            <div className="pt-2.5 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0 bg-slate-950/40 px-2 py-1.5 rounded-2xl">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span className="font-extrabold text-slate-200">
+                  Showing {((page - 1) * PAGE_SIZE) + 1} -{' '}
+                  {Math.min(page * PAGE_SIZE, queryResult.totalCount).toLocaleString()} of{' '}
+                  {queryResult.totalCount.toLocaleString()} skins
+                </span>
+                <span className="hidden lg:inline text-[11px] text-slate-500">
+                  (Recycler: 20 slots active · 0 MB Leaked)
+                </span>
+              </div>
 
-                return (
-                  <div
-                    key={skin.id}
-                    onClick={() => setSelectedPreviewSkinId(skin.id)}
-                    className={`relative cursor-pointer rounded-2xl border p-3 flex flex-col justify-between transition-all ${
-                      isSelected
-                        ? 'border-cyan-400 bg-slate-800/90 ring-2 ring-cyan-500/30'
-                        : isEquipped
-                        ? 'border-emerald-500/60 bg-slate-900/80'
-                        : isUnlocked
-                        ? 'border-slate-700 bg-slate-900/60 hover:border-slate-600'
-                        : 'border-slate-800 bg-slate-950/60 opacity-75 hover:opacity-90'
-                    }`}
+              {/* Navigation controls */}
+              <div className="flex items-center gap-1.5">
+                {/* First page */}
+                <button
+                  onClick={() => changePage(1)}
+                  disabled={page <= 1}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs transition"
+                  title="First Page"
+                >
+                  <ChevronsLeft className="h-4 w-4" />
+                </button>
+
+                {/* Prev page */}
+                <button
+                  onClick={() => changePage(Math.max(1, page - 1))}
+                  disabled={page <= 1}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-bold transition flex items-center gap-1"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" /> Prev
+                </button>
+
+                {/* Direct Jump Input Form */}
+                <form onSubmit={handleJumpPageSubmit} className="flex items-center gap-1">
+                  <span className="text-xs text-slate-400">Page</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={queryResult.totalPages}
+                    value={jumpPageInput}
+                    onChange={(e) => setJumpPageInput(e.target.value)}
+                    className="w-12 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-center text-slate-100 font-bold focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  />
+                  <span className="text-xs text-slate-400">of {queryResult.totalPages.toLocaleString()}</span>
+                  <button
+                    type="submit"
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-cyan-500 hover:text-slate-950 text-slate-300 text-[11px] font-black transition"
                   >
-                    <div>
-                      {/* Card Top: Palette + Name + Badges */}
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <div className="flex -space-x-1.5">
-                            <div
-                              className="h-5 w-5 rounded-full border border-slate-900 shadow"
-                              style={{ backgroundColor: skin.primaryColor }}
-                            />
-                            <div
-                              className="h-5 w-5 rounded-full border border-slate-900 shadow"
-                              style={{ backgroundColor: skin.secondaryColor }}
-                            />
-                            <div
-                              className="h-5 w-5 rounded-full border border-slate-900 shadow"
-                              style={{ backgroundColor: skin.glowColor }}
-                            />
-                          </div>
-                          <span className="font-extrabold text-xs text-slate-200 truncate max-w-[100px]">
-                            {skin.name}
-                          </span>
-                        </div>
+                    Go
+                  </button>
+                </form>
 
-                        {/* Rarity Tag */}
-                        <span
-                          className={`text-[9px] uppercase font-black px-1.5 py-0.2 rounded border ${
-                            skin.rarity === 'legendary'
-                              ? 'border-amber-500/60 bg-amber-950/70 text-amber-300'
-                              : skin.rarity === 'epic'
-                              ? 'border-purple-500/60 bg-purple-950/70 text-purple-300'
-                              : skin.rarity === 'rare'
-                              ? 'border-cyan-500/60 bg-cyan-950/70 text-cyan-300'
-                              : 'border-slate-600 bg-slate-800 text-emerald-400'
-                          }`}
-                        >
-                          {skin.rarity}
-                        </span>
-                      </div>
+                {/* Next page */}
+                <button
+                  onClick={() => changePage(Math.min(queryResult.totalPages, page + 1))}
+                  disabled={page >= queryResult.totalPages}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-bold transition flex items-center gap-1"
+                >
+                  Next <ChevronRight className="h-3.5 w-3.5" />
+                </button>
 
-                      <p className="text-[11px] text-slate-400 line-clamp-2 leading-tight mb-2">
-                        {skin.description}
-                      </p>
-                    </div>
-
-                    {/* Card Bottom: Status Pill */}
-                    <div className="mt-2 flex items-center justify-between pt-1.5 border-t border-slate-800/80">
-                      <span className="text-[10px] font-bold text-slate-400">
-                        {skin.statBonus}
-                      </span>
-
-                      {isEquipped ? (
-                        <span className="text-[10px] font-black text-cyan-400 flex items-center gap-1">
-                          <Check className="h-3 w-3" /> Active
-                        </span>
-                      ) : isUnlocked ? (
-                        <span className="text-[10px] font-bold text-emerald-400">
-                          Owned
-                        </span>
-                      ) : skin.unlockType === 'coins' ? (
-                        <span className="text-[10px] font-black text-amber-400">
-                          {skin.coinPrice} 🪙
-                        </span>
-                      ) : skin.unlockType === 'ad_watch' ? (
-                        <span className="text-[10px] font-black text-cyan-300 flex items-center gap-0.5">
-                          <Tv className="h-2.5 w-2.5" /> Free Ad
-                        </span>
-                      ) : skin.unlockType === 'milestone' ? (
-                        <span className="text-[10px] font-bold text-slate-400">
-                          Lvl {skin.requiredLevel}
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-bold text-purple-400">
-                          Boss/Crate
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                {/* Last page */}
+                <button
+                  onClick={() => changePage(queryResult.totalPages)}
+                  disabled={page >= queryResult.totalPages}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs transition"
+                  title="Last Page"
+                >
+                  <ChevronsRight className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -871,16 +1202,14 @@ export default function SkinsWardrobeModal({
         {isGachaModalOpen && (
           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/95 p-6 text-center">
             <div className="relative w-full max-w-md rounded-3xl border border-purple-500/50 bg-slate-900 p-6 shadow-2xl overflow-hidden">
-              {/* Background radiant aura */}
               <div
                 className="absolute -top-20 -left-20 w-80 h-80 rounded-full blur-3xl opacity-30 pointer-events-none"
                 style={{
-                  backgroundColor:
-                    gachaResultSkin?.glowColor || '#a855f7',
+                  backgroundColor: gachaResultSkin?.glowColor || '#a855f7',
                 }}
               />
 
-              {/* Step 1 & 2: Shaking Crate & Light Burst */}
+              {/* Shaking Crate & Burst */}
               {(gachaStep === 'shaking' || gachaStep === 'burst') && (
                 <div className="py-8 flex flex-col items-center">
                   <div
@@ -907,7 +1236,7 @@ export default function SkinsWardrobeModal({
                 </div>
               )}
 
-              {/* Step 3: Skin Reveal */}
+              {/* Skin Reveal */}
               {gachaStep === 'reveal' && gachaResultSkin && (
                 <div className="py-4 flex flex-col items-center animate-in zoom-in-90 duration-300">
                   <span
@@ -924,7 +1253,6 @@ export default function SkinsWardrobeModal({
                     ★ {gachaResultSkin.rarity} DROP ★
                   </span>
 
-                  {/* Visual Palettes */}
                   <div className="flex items-center -space-x-2 my-2">
                     <div
                       className="h-10 w-10 rounded-full border-2 border-slate-900 shadow-lg"
@@ -951,7 +1279,6 @@ export default function SkinsWardrobeModal({
                     Perk: {gachaResultSkin.statBonus}
                   </div>
 
-                  {/* Duplicate Refund Notice or New Unlock Banner */}
                   {gachaIsDuplicate ? (
                     <div className="mb-4 rounded-xl bg-amber-950/60 border border-amber-500/40 px-4 py-2 text-xs font-bold text-amber-300">
                       Already Owned! Duplicate Protection Refunded +200 🪙 Coins.
@@ -962,7 +1289,6 @@ export default function SkinsWardrobeModal({
                     </div>
                   )}
 
-                  {/* Action buttons */}
                   <div className="flex items-center gap-3 w-full">
                     <button
                       onClick={() => {

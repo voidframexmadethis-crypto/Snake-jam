@@ -67,6 +67,37 @@ class SoundManager {
     }
   }
 
+  public playPelletEatChain(comboCount: number = 1) {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const now = this.ctx.currentTime;
+
+      // Base pitch rises with combo count up to 2.5x octave!
+      const pitchMultiplier = Math.min(2.5, 1 + comboCount * 0.08);
+      const baseFreq = 587.33 * pitchMultiplier;
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(baseFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.6, now + 0.06);
+
+      gain.gain.setValueAtTime(0.09, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.07);
+    } catch {
+      // Audio errors non-blocking
+    }
+  }
+
   public playPowerup() {
     if (!this.enabled) return;
     this.initCtx();

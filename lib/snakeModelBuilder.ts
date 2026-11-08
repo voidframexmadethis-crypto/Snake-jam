@@ -34,7 +34,11 @@ export function buildSnakeProceduralHead(
     skull.castShadow = !isSoftwareGl;
     group.add(skull);
 
-    // Muzzle / Snout (Puffy cheeks)
+    // Muzzle / Snout (Puffy cheeks) - Part of the jaw
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.35 * scale, 0.2 * scale);
+
     const snoutGeo = new THREE.SphereGeometry(0.35 * scale, 12, 12);
     snoutGeo.scale(1.4, 0.8, 1.0);
     const snoutMat = new THREE.MeshStandardMaterial({
@@ -42,16 +46,17 @@ export function buildSnakeProceduralHead(
       roughness: 0.5,
     });
     const snout = new THREE.Mesh(snoutGeo, snoutMat);
-    snout.position.set(0, 0.35 * scale, 0.9 * scale);
-    group.add(snout);
+    snout.position.set(0, 0, 0.7 * scale);
+    jawGroup.add(snout);
+    group.add(jawGroup);
 
     // Small pink nose tip
     const noseGeo = new THREE.ConeGeometry(0.1 * scale, 0.12 * scale, 3);
     noseGeo.rotateX(Math.PI);
     const noseMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
     const nose = new THREE.Mesh(noseGeo, noseMat);
-    nose.position.set(0, 0.42 * scale, 1.25 * scale);
-    group.add(nose);
+    nose.position.set(0, 0.07 * scale, 1.05 * scale);
+    jawGroup.add(nose);
 
     // Pointed Cat Ears (Left & Right)
     const earGeo = new THREE.ConeGeometry(0.28 * scale, 0.65 * scale, 4);
@@ -117,8 +122,8 @@ export function buildSnakeProceduralHead(
     const tongueGeo = new THREE.BoxGeometry(0.12 * scale, 0.04 * scale, 0.35 * scale);
     const tongueMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
     tongue = new THREE.Mesh(tongueGeo, tongueMat);
-    tongue.position.set(0, 0.22 * scale, 1.2 * scale);
-    group.add(tongue);
+    tongue.position.set(0, -0.13 * scale, 1.0 * scale);
+    jawGroup.add(tongue);
   }
 
   // ----------------------------------------------------
@@ -199,12 +204,19 @@ export function buildSnakeProceduralHead(
     eyeR.rotation.y = -0.25;
     group.add(eyeR);
 
+    // Lower jaw group for dragon
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.25 * scale, 0.4 * scale);
+
     // Dragon Forked Tongue
     const tongueGeo = new THREE.BoxGeometry(0.14 * scale, 0.04 * scale, 0.8 * scale);
     const tongueMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
     tongue = new THREE.Mesh(tongueGeo, tongueMat);
-    tongue.position.set(0, 0.35 * scale, 1.7 * scale);
-    group.add(tongue);
+    tongue.position.set(0, 0.1 * scale, 1.3 * scale);
+    jawGroup.add(tongue);
+
+    group.add(jawGroup);
   }
 
   // ----------------------------------------------------
@@ -268,13 +280,20 @@ export function buildSnakeProceduralHead(
     tR.position.set(0.55 * scale, 1.45 * scale, -0.1 * scale);
     group.add(tR);
 
+    // Cyber jaw
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.3 * scale, 0.2 * scale);
+
     // Laser tongue / plasma probe
     const probeGeo = new THREE.CylinderGeometry(0.04 * scale, 0.04 * scale, 0.6 * scale, 8);
     probeGeo.rotateX(Math.PI / 2);
     const probeMat = new THREE.MeshBasicMaterial({ color: glowColor });
     tongue = new THREE.Mesh(probeGeo, probeMat);
-    tongue.position.set(0, 0.4 * scale, 1.5 * scale);
-    group.add(tongue);
+    tongue.position.set(0, 0.1 * scale, 1.3 * scale);
+    jawGroup.add(tongue);
+
+    group.add(jawGroup);
   }
 
   // ----------------------------------------------------
@@ -338,12 +357,19 @@ export function buildSnakeProceduralHead(
     pR.position.set(0.35 * scale, 0.7 * scale, 1.08 * scale);
     group.add(pR);
 
+    // Food jaw
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.25 * scale, 0.3 * scale);
+
     // Sweet pink lollipop tongue
     const tongueGeo = new THREE.BoxGeometry(0.14 * scale, 0.04 * scale, 0.5 * scale);
     const tongueMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
     tongue = new THREE.Mesh(tongueGeo, tongueMat);
-    tongue.position.set(0, 0.3 * scale, 1.25 * scale);
-    group.add(tongue);
+    tongue.position.set(0, 0.05 * scale, 0.95 * scale);
+    jawGroup.add(tongue);
+
+    group.add(jawGroup);
   }
 
   // ----------------------------------------------------
@@ -404,77 +430,319 @@ export function buildSnakeProceduralHead(
     eyeR.position.set(0.45 * scale, 0.7 * scale, 0.7 * scale);
     group.add(eyeR);
 
+    // Celestial jaw
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.25 * scale, 0.3 * scale);
+
     // Golden divine tongue
     const tongueGeo = new THREE.BoxGeometry(0.12 * scale, 0.04 * scale, 0.6 * scale);
     const tongueMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
     tongue = new THREE.Mesh(tongueGeo, tongueMat);
-    tongue.position.set(0, 0.35 * scale, 1.35 * scale);
-    group.add(tongue);
+    tongue.position.set(0, 0.1 * scale, 1.05 * scale);
+    jawGroup.add(tongue);
+
+    group.add(jawGroup);
   }
 
   // ----------------------------------------------------
-  // 6. CLASSIC SERPENT
+  // 6. CLASSIC SERPENT (MINECRAFT BLOCKY STYLE WITH JAW)
   // ----------------------------------------------------
-  else {
-    const skullGeo = new THREE.ConeGeometry(0.85 * scale, 1.8 * scale, 16);
-    skullGeo.rotateX(Math.PI / 2);
-    const skullMat = new THREE.MeshStandardMaterial({
+  else if (modelType === 'classic') {
+    // Upper head block
+    const upperGeo = new THREE.BoxGeometry(1.0 * scale, 0.7 * scale, 1.2 * scale);
+    const headMat = new THREE.MeshStandardMaterial({
       color: primaryColor,
-      roughness: 0.25,
-      metalness: 0.4,
+      roughness: 0.8,
+      metalness: 0.1,
     });
-    const skull = new THREE.Mesh(skullGeo, skullMat);
-    skull.position.set(0, 0.5 * scale, 0.3 * scale);
-    skull.castShadow = !isSoftwareGl;
-    group.add(skull);
+    const upperHead = new THREE.Mesh(upperGeo, headMat);
+    upperHead.position.set(0, 0.45 * scale, 0.3 * scale);
+    upperHead.castShadow = !isSoftwareGl;
+    group.add(upperHead);
 
-    const browGeo = new THREE.BoxGeometry(0.9 * scale, 0.3 * scale, 0.8 * scale);
-    const browMat = new THREE.MeshStandardMaterial({
+    // Lower jaw group for mouth open/close animation
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.15 * scale, 0.3 * scale);
+
+    const lowerGeo = new THREE.BoxGeometry(0.96 * scale, 0.3 * scale, 1.15 * scale);
+    const lowerMat = new THREE.MeshStandardMaterial({
       color: secondaryColor,
-      roughness: 0.4,
-      metalness: 0.6,
+      roughness: 0.8,
+      metalness: 0.1,
     });
-    const brow = new THREE.Mesh(browGeo, browMat);
-    brow.position.set(0, 0.75 * scale, 0.2 * scale);
-    group.add(brow);
+    const lowerJaw = new THREE.Mesh(lowerGeo, lowerMat);
+    lowerJaw.position.set(0, -0.15 * scale, 0);
+    jawGroup.add(lowerJaw);
 
-    const eyeGeo = new THREE.SphereGeometry(0.18 * scale, 12, 12);
+    // Tongue on jaw
+    const tongueGeo = new THREE.BoxGeometry(0.2 * scale, 0.05 * scale, 0.6 * scale);
+    const tongueMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+    tongue = new THREE.Mesh(tongueGeo, tongueMat);
+    tongue.position.set(0, 0.02 * scale, 0.6 * scale);
+    jawGroup.add(tongue);
+
+    group.add(jawGroup);
+
+    // Blocky pixel eyes
+    const eyeGeo = new THREE.BoxGeometry(0.25 * scale, 0.22 * scale, 0.15 * scale);
     const eyeMat = new THREE.MeshStandardMaterial({
       color: glowColor,
       emissive: glowColor,
-      emissiveIntensity: 1.0,
-      roughness: 0.1,
+      emissiveIntensity: 0.9,
     });
     const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-    eyeL.position.set(-0.45 * scale, 0.7 * scale, 0.4 * scale);
+    eyeL.position.set(-0.42 * scale, 0.65 * scale, 0.65 * scale);
     group.add(eyeL);
 
     const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-    eyeR.position.set(0.45 * scale, 0.7 * scale, 0.4 * scale);
+    eyeR.position.set(0.42 * scale, 0.65 * scale, 0.65 * scale);
+    group.add(eyeR);
+  }
+
+  // ----------------------------------------------------
+  // 7. ROLLER COASTER CAR
+  // ----------------------------------------------------
+  else if (modelType === 'roller_coaster') {
+    // Rectangular car body
+    const carGeo = new THREE.BoxGeometry(1.2 * scale, 0.8 * scale, 1.6 * scale);
+    const carMat = new THREE.MeshStandardMaterial({ color: primaryColor, metalness: 0.7, roughness: 0.2 });
+    const car = new THREE.Mesh(carGeo, carMat);
+    car.position.set(0, 0.5 * scale, 0);
+    group.add(car);
+
+    // Front windshield / grill
+    const windGeo = new THREE.PlaneGeometry(1.0 * scale, 0.4 * scale);
+    const windMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.6 });
+    const wind = new THREE.Mesh(windGeo, windMat);
+    wind.position.set(0, 0.6 * scale, 0.81 * scale);
+    group.add(wind);
+
+    // Headlights
+    const lightGeo = new THREE.CircleGeometry(0.15 * scale, 16);
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const lightL = new THREE.Mesh(lightGeo, lightMat);
+    lightL.position.set(-0.4 * scale, 0.3 * scale, 0.81 * scale);
+    group.add(lightL);
+    const lightR = new THREE.Mesh(lightGeo, lightMat);
+    lightR.position.set(0.4 * scale, 0.3 * scale, 0.81 * scale);
+    group.add(lightR);
+
+    // Jaw group for roller coaster (front bumper)
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.2 * scale, 0.8 * scale);
+    const bumperGeo = new THREE.BoxGeometry(1.3 * scale, 0.25 * scale, 0.3 * scale);
+    const bumperMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8 });
+    const bumper = new THREE.Mesh(bumperGeo, bumperMat);
+    bumper.position.set(0, -0.1 * scale, 0.1 * scale);
+    jawGroup.add(bumper);
+    group.add(jawGroup);
+  }
+
+  // ----------------------------------------------------
+  // 8. SNOWMAN
+  // ----------------------------------------------------
+  else if (modelType === 'snowman') {
+    const headGeo = new THREE.SphereGeometry(0.7 * scale, 16, 16);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.set(0, 0.7 * scale, 0);
+    group.add(head);
+
+    // Carrot nose
+    const noseGeo = new THREE.ConeGeometry(0.12 * scale, 0.5 * scale, 8);
+    noseGeo.rotateX(Math.PI / 2);
+    const noseMat = new THREE.MeshStandardMaterial({ color: 0xf97316 });
+    const nose = new THREE.Mesh(noseGeo, noseMat);
+    nose.position.set(0, 0.7 * scale, 0.7 * scale);
+    group.add(nose);
+
+    // Coal eyes
+    const coalGeo = new THREE.SphereGeometry(0.1 * scale, 8, 8);
+    const coalMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    const eyeL = new THREE.Mesh(coalGeo, coalMat);
+    eyeL.position.set(-0.25 * scale, 0.85 * scale, 0.55 * scale);
+    group.add(eyeL);
+    const eyeR = new THREE.Mesh(coalGeo, coalMat);
+    eyeR.position.set(0.25 * scale, 0.85 * scale, 0.55 * scale);
     group.add(eyeR);
 
-    const hornGeo = new THREE.ConeGeometry(0.15 * scale, 0.7 * scale, 8);
-    hornGeo.rotateX(-0.3);
-    const hornMat = new THREE.MeshStandardMaterial({
-      color: glowColor,
-      metalness: 0.8,
-      roughness: 0.2,
+    // Top hat
+    const hatBaseGeo = new THREE.CylinderGeometry(0.6 * scale, 0.6 * scale, 0.1 * scale, 16);
+    const hatMat = new THREE.MeshStandardMaterial({ color: 0x18181b });
+    const hatBase = new THREE.Mesh(hatBaseGeo, hatMat);
+    hatBase.position.set(0, 1.3 * scale, 0);
+    group.add(hatBase);
+    const hatTopGeo = new THREE.CylinderGeometry(0.4 * scale, 0.4 * scale, 0.6 * scale, 16);
+    const hatTop = new THREE.Mesh(hatTopGeo, hatMat);
+    hatTop.position.set(0, 1.6 * scale, 0);
+    group.add(hatTop);
+
+    // Jaw (Bottom snowball segment)
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.3 * scale, 0.3 * scale);
+    const lowerGeo = new THREE.SphereGeometry(0.4 * scale, 12, 12);
+    const lower = new THREE.Mesh(lowerGeo, headMat);
+    lower.position.set(0, -0.2 * scale, 0.2 * scale);
+    jawGroup.add(lower);
+    group.add(jawGroup);
+  }
+
+  // ----------------------------------------------------
+  // 9. YETI
+  // ----------------------------------------------------
+  else if (modelType === 'yeti') {
+    const headGeo = new THREE.BoxGeometry(1.2 * scale, 1.2 * scale, 1.2 * scale);
+    const furMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 1.0 });
+    const head = new THREE.Mesh(headGeo, furMat);
+    head.position.set(0, 0.6 * scale, 0);
+    group.add(head);
+
+    // Face patch
+    const faceGeo = new THREE.PlaneGeometry(0.8 * scale, 0.6 * scale);
+    const faceMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8 });
+    const face = new THREE.Mesh(faceGeo, faceMat);
+    face.position.set(0, 0.7 * scale, 0.61 * scale);
+    group.add(face);
+
+    // Horns
+    const hornGeo = new THREE.ConeGeometry(0.2 * scale, 0.6 * scale, 8);
+    const hornMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+    const hL = new THREE.Mesh(hornGeo, hornMat);
+    hL.position.set(-0.5 * scale, 1.2 * scale, 0);
+    hL.rotation.z = 0.4;
+    group.add(hL);
+    const hR = new THREE.Mesh(hornGeo, hornMat);
+    hR.position.set(0.5 * scale, 1.2 * scale, 0);
+    hR.rotation.z = -0.4;
+    group.add(hR);
+
+    // Jaw
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.2 * scale, 0.5 * scale);
+    const lowerGeo = new THREE.BoxGeometry(1.0 * scale, 0.4 * scale, 0.6 * scale);
+    const lower = new THREE.Mesh(lowerGeo, furMat);
+    lower.position.set(0, -0.2 * scale, 0.1 * scale);
+    jawGroup.add(lower);
+    
+    // Teeth
+    const toothGeo = new THREE.BoxGeometry(0.1 * scale, 0.2 * scale, 0.1 * scale);
+    const toothMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    for (let i = -1; i <= 1; i++) {
+      const tooth = new THREE.Mesh(toothGeo, toothMat);
+      tooth.position.set(i * 0.3 * scale, 0.1 * scale, 0.31 * scale);
+      jawGroup.add(tooth);
+    }
+    group.add(jawGroup);
+  }
+
+  // ----------------------------------------------------
+  // 10. ELECTRIC EEL
+  // ----------------------------------------------------
+  else if (modelType === 'electric_eel') {
+    const headGeo = new THREE.CapsuleGeometry(0.5 * scale, 1.0 * scale, 4, 16);
+    headGeo.rotateX(Math.PI / 2);
+    const eelMat = new THREE.MeshStandardMaterial({ color: primaryColor, emissive: glowColor, emissiveIntensity: 0.5 });
+    const head = new THREE.Mesh(headGeo, eelMat);
+    head.position.set(0, 0.5 * scale, 0);
+    group.add(head);
+
+    // Glow streaks
+    const glowGeo = new THREE.BoxGeometry(0.1 * scale, 0.05 * scale, 0.8 * scale);
+    const glowMat = new THREE.MeshBasicMaterial({ color: glowColor });
+    const gL = new THREE.Mesh(glowGeo, glowMat);
+    gL.position.set(-0.45 * scale, 0.5 * scale, 0);
+    group.add(gL);
+    const gR = new THREE.Mesh(glowGeo, glowMat);
+    gR.position.set(0.45 * scale, 0.5 * scale, 0);
+    group.add(gR);
+
+    // Jaw
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.3 * scale, 0.5 * scale);
+    const lowerGeo = new THREE.BoxGeometry(0.8 * scale, 0.3 * scale, 0.6 * scale);
+    const lower = new THREE.Mesh(lowerGeo, eelMat);
+    lower.position.set(0, -0.15 * scale, 0.1 * scale);
+    jawGroup.add(lower);
+    group.add(jawGroup);
+  }
+
+  // ----------------------------------------------------
+  // 11. SHARK (Apex Ocean Predator)
+  // ----------------------------------------------------
+  else if (modelType === 'shark') {
+    // Streamlined shark skull
+    const skullGeo = new THREE.ConeGeometry(0.7 * scale, 1.4 * scale, 8);
+    skullGeo.rotateX(-Math.PI / 2);
+    const sharkMat = new THREE.MeshStandardMaterial({
+      color: primaryColor,
+      roughness: 0.3,
+      metalness: 0.2,
     });
-    const hornL = new THREE.Mesh(hornGeo, hornMat);
-    hornL.position.set(-0.35 * scale, 0.95 * scale, -0.2 * scale);
-    hornL.rotation.z = -0.2;
-    group.add(hornL);
+    const skull = new THREE.Mesh(skullGeo, sharkMat);
+    skull.position.set(0, 0.45 * scale, 0.2 * scale);
+    skull.castShadow = !isSoftwareGl;
+    group.add(skull);
 
-    const hornR = new THREE.Mesh(hornGeo, hornMat);
-    hornR.position.set(0.35 * scale, 0.95 * scale, -0.2 * scale);
-    hornR.rotation.z = 0.2;
-    group.add(hornR);
+    // Iconic Dorsal Fin
+    const finGeo = new THREE.ConeGeometry(0.25 * scale, 0.75 * scale, 4);
+    finGeo.rotateZ(0.2);
+    const finMat = new THREE.MeshStandardMaterial({ color: secondaryColor });
+    const dorsalFin = new THREE.Mesh(finGeo, finMat);
+    dorsalFin.position.set(0, 1.05 * scale, -0.15 * scale);
+    group.add(dorsalFin);
 
-    const tongueGeo = new THREE.BoxGeometry(0.12 * scale, 0.04 * scale, 0.6 * scale);
-    const tongueMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
-    tongue = new THREE.Mesh(tongueGeo, tongueMat);
-    tongue.position.set(0, 0.35 * scale, 1.4 * scale);
-    group.add(tongue);
+    // Side pectoral fins
+    const pecGeo = new THREE.BoxGeometry(0.55 * scale, 0.08 * scale, 0.35 * scale);
+    const pecL = new THREE.Mesh(pecGeo, finMat);
+    pecL.position.set(-0.7 * scale, 0.35 * scale, 0);
+    pecL.rotation.z = -0.3;
+    group.add(pecL);
+    const pecR = new THREE.Mesh(pecGeo, finMat);
+    pecR.position.set(0.7 * scale, 0.35 * scale, 0);
+    pecR.rotation.z = 0.3;
+    group.add(pecR);
+
+    // Predator glowing eyes
+    const eyeGeo = new THREE.SphereGeometry(0.12 * scale, 8, 8);
+    const eyeMat = new THREE.MeshBasicMaterial({ color: glowColor });
+    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeL.position.set(-0.45 * scale, 0.55 * scale, 0.35 * scale);
+    group.add(eyeL);
+    const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeR.position.set(0.45 * scale, 0.55 * scale, 0.35 * scale);
+    group.add(eyeR);
+
+    // Snapping lower jaw with sharp razor teeth
+    const jawGroup = new THREE.Group();
+    jawGroup.name = 'jawGroup';
+    jawGroup.position.set(0, 0.25 * scale, 0.25 * scale);
+    const lowerGeo = new THREE.BoxGeometry(0.65 * scale, 0.2 * scale, 0.75 * scale);
+    const lowerMat = new THREE.MeshStandardMaterial({ color: secondaryColor });
+    const lower = new THREE.Mesh(lowerGeo, lowerMat);
+    lower.position.set(0, -0.05 * scale, 0.2 * scale);
+    jawGroup.add(lower);
+
+    // Razor white teeth row
+    const toothGeo = new THREE.ConeGeometry(0.06 * scale, 0.16 * scale, 3);
+    const toothMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    for (let i = -2; i <= 2; i++) {
+      const tooth = new THREE.Mesh(toothGeo, toothMat);
+      tooth.position.set(i * 0.12 * scale, 0.08 * scale, 0.45 * scale);
+      jawGroup.add(tooth);
+    }
+    group.add(jawGroup);
+  }
+  else {
+    const fallbackGeo = new THREE.SphereGeometry(0.8 * scale, 16, 16);
+    const fallbackMat = new THREE.MeshStandardMaterial({ color: primaryColor });
+    const fallbackMesh = new THREE.Mesh(fallbackGeo, fallbackMat);
+    group.add(fallbackMesh);
   }
 
   return { headGroup: group, tongueMesh: tongue };
@@ -490,34 +758,15 @@ export function buildSnakeSegmentMesh(
   scale: number = 1.0
 ): THREE.Mesh {
   const isAlt = index % 2 === 0;
-  let geo: THREE.BufferGeometry;
-
-  if (modelType === 'cat') {
-    // Soft rounded sphere beads
-    geo = new THREE.SphereGeometry(0.55 * scale, 14, 14);
-  } else if (modelType === 'dragon') {
-    // Spiked armored dodecahedron
-    geo = new THREE.DodecahedronGeometry(0.56 * scale, 1);
-  } else if (modelType === 'robot') {
-    // Hexagonal cyber prism
-    geo = new THREE.CylinderGeometry(0.52 * scale, 0.52 * scale, 0.65 * scale, 6);
-  } else if (modelType === 'food') {
-    // Torus / rounded melon rind
-    geo = new THREE.TorusGeometry(0.38 * scale, 0.2 * scale, 10, 16);
-  } else if (modelType === 'celestial') {
-    // Faceted crystal gem
-    geo = new THREE.OctahedronGeometry(0.58 * scale, 0);
-  } else {
-    // Classic dodecahedron
-    geo = new THREE.DodecahedronGeometry(0.55 * scale, 1);
-  }
+  // Minecraft block geometry for snake body segments
+  const geo = new THREE.BoxGeometry(0.9 * scale, 0.9 * scale, 0.9 * scale);
 
   const mat = new THREE.MeshStandardMaterial({
     color: isAlt ? primaryColor : secondaryColor,
-    roughness: modelType === 'cat' ? 0.7 : 0.35,
-    metalness: modelType === 'robot' || modelType === 'celestial' ? 0.85 : 0.3,
+    roughness: 0.8,
+    metalness: 0.1,
     emissive: isAlt ? glowColor : 0x000000,
-    emissiveIntensity: isAlt ? 0.25 : 0,
+    emissiveIntensity: isAlt ? 0.3 : 0,
   });
 
   const mesh = new THREE.Mesh(geo, mat);

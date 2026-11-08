@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { ThreeGameEngine, FloatingText } from '@/lib/threeGameEngine';
+import { ThreeGameEngine, FloatingText, KillFeedEntry } from '@/lib/threeGameEngine';
 import {
   GameStats,
   MATCH_DURATION_SECONDS,
@@ -10,8 +10,15 @@ import {
   STAGES,
   PlayerUpgrades,
   computeCollectionPerks,
+  INITIAL_MISSIONS,
+  INITIAL_ACHIEVEMENTS,
+  Mission,
+  Achievement,
+  LeaderboardEntry,
 } from '@/lib/gameTypes';
+import { soundManager } from '@/lib/audio';
 import HUD from './HUD';
+import { useLowPolyObjectPool } from '@/hooks/useObjectPool';
 import VirtualJoystick from './VirtualJoystick';
 import BottomControlDock from './BottomControlDock';
 import DailySpinModal from './DailySpinModal';
@@ -19,6 +26,7 @@ import SkinsWardrobeModal from './SkinsWardrobeModal';
 import StageSelectModal from './StageSelectModal';
 import TycoonModal from './TycoonPadsOverlay';
 import GameOverModal from './GameOverModal';
+import MissionsAchievementsModal from './MissionsAchievementsModal';
 
 const INITIAL_STATS: GameStats = {
   score: 0,
@@ -46,10 +54,13 @@ const INITIAL_STATS: GameStats = {
     speed: 0,
     shield: 0,
     doubleCash: 0,
+    fire: 0,
   },
   bossAlive: false,
   bossHp: 600,
   bossMaxHp: 600,
+  stageProgress: 0,
+  bossPhase: 1,
 };
 
 export default function GameCanvas() {
@@ -57,16 +68,27 @@ export default function GameCanvas() {
   const engineRef = useRef<ThreeGameEngine | null>(null);
 
   const [stats, setStats] = useState<GameStats>(INITIAL_STATS);
+  const [gameState, setGameState] = useState<'menu' | 'countdown' | 'playing' | 'gameover'>('menu');
+  const [countdownSec, setCountdownSec] = useState<number>(3);
   const [isPaused, setIsPaused] = useState(false);
   const [floatingTexts, setFloatingTexts] = useState<FloatingText[]>([]);
   const [cameraMode, setCameraMode] = useState<'dynamic' | 'close' | 'isometric'>('dynamic');
+
+  // Quests & Achievements State
+  const [missions, setMissions] = useState<Mission[]>(INITIAL_MISSIONS);
+  const [achievements, setAchievements] = useState<Achievement[]>(INITIAL_ACHIEVEMENTS);
 
   // Modals state
   const [isTycoonOpen, setIsTycoonOpen] = useState(false);
   const [isSkinsOpen, setIsSkinsOpen] = useState(false);
   const [isStagesOpen, setIsStagesOpen] = useState(false);
   const [isSpinOpen, setIsSpinOpen] = useState(false);
+  const [isMissionsOpen, setIsMissionsOpen] = useState(false);
   const [unlockedSkinIds, setUnlockedSkinIds] = useState<string[]>(['emerald']);
+
+  // Leaderboard and kill feed data
+  const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
+  const [killFeedData, setKillFeedData] = useState<KillFeedEntry[]>([]);
 
   // Floating text queue
   const addFloatingText = useCallback((textData: FloatingText) => {
@@ -80,17 +102,51 @@ export default function GameCanvas() {
     playerPos: { x: 0, z: 0 },
     botPositions: [] as { x: number; z: number }[],
     bossPos: null as { x: number; z: number } | null,
-    currentRadius: 90,
-    maxRadius: 90,
+    currentRadius: 1250,
+    maxRadius: 1250,
   });
 
-  // Periodically refresh radar positions for HUD
+  // Periodically refresh radar, live leaderboard, kill feed, and quests progress
   useEffect(() => {
     const interval = setInterval(() => {
       if (engineRef.current) {
+        const curStats = engineRef.current.stats;
         setRadarData(engineRef.current.getRadarData());
+        setLeaderboardData(engineRef.current.getLiveLeaderboard());
+        setKillFeedData(engineRef.current.getKillFeed());
+
+        // Missions Progress Update
+        setMissions((prevMissions) =>
+          prevMissions.map((m) => {
+            let currentVal = m.current;
+            if (m.id === 'daily_kills') currentVal = Math.max(currentVal, curStats.botsKilled);
+            if (m.id === 'daily_pellets') currentVal = Math.max(currentVal, curStats.pelletsEaten);
+            if (m.id === 'daily_bank') currentVal = Math.max(currentVal, curStats.cashEarnedThisMatch);
+            if (m.id === 'weekly_length') currentVal = Math.max(currentVal, curStats.currentLength);
+            if (m.id === 'weekly_boss') currentVal = curStats.bossHp <= 0 ? 1 : currentVal;
+
+            const completed = currentVal >= m.target;
+            return { ...m, current: currentVal, completed };
+          })
+        );
+
+        // Achievements Progress Update
+        setAchievements((prevAch) =>
+          prevAch.map((a) => {
+            let currentVal = a.current;
+            if (a.id === 'ach_first_kill' || a.id === 'ach_hunter_master')
+              currentVal = Math.max(currentVal, curStats.botsKilled);
+            if (a.id === 'ach_bank_tycoon') currentVal = Math.max(currentVal, curStats.totalPermanentCoins);
+            if (a.id === 'ach_pellet_master') currentVal = Math.max(currentVal, curStats.pelletsEaten);
+            if (a.id === 'ach_colossus_80') currentVal = Math.max(currentVal, curStats.currentLength);
+            if (a.id === 'ach_stage_3') currentVal = Math.max(currentVal, curStats.currentStageId);
+
+            const unlocked = currentVal >= a.target;
+            return { ...a, current: currentVal, unlocked };
+          })
+        );
       }
-    }, 100);
+    }, 250);
     return () => clearInterval(interval);
   }, []);
 
@@ -99,7 +155,7 @@ export default function GameCanvas() {
     isVictory: false,
   });
 
-  // Initialize Three.js Engine once inside ref container
+  // Initialize Three.js Engine with optimized 80 FPS game loop and object pooling
   useEffect(() => {
     if (!mountRef.current) return;
 
@@ -107,9 +163,13 @@ export default function GameCanvas() {
       mountRef.current,
       (newStats) => setStats({ ...newStats }),
       addFloatingText,
-      (isVictory) => setMatchResult({ isGameOver: true, isVictory }),
+      (isVictory) => {
+        setMatchResult({ isGameOver: true, isVictory });
+        setGameState('gameover');
+      },
       INITIAL_STATS
     );
+    engine.isPaused = true; // Pause engine initially for main menu
     engineRef.current = engine;
 
     return () => {
@@ -118,18 +178,48 @@ export default function GameCanvas() {
     };
   }, [addFloatingText]);
 
+  // Handle Start Match Sequence (Menu -> 3s Countdown -> Direct Action)
+  const handleStartMatch = () => {
+    setIsMissionsOpen(false);
+    setIsSkinsOpen(false);
+    setIsStagesOpen(false);
+    setIsTycoonOpen(false);
+    setIsSpinOpen(false);
+
+    setGameState('countdown');
+    setCountdownSec(3);
+    soundManager.playDailySpinTick();
+
+    const timer = setInterval(() => {
+      setCountdownSec((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          soundManager.playPowerup();
+          setGameState('playing');
+          if (engineRef.current) {
+            engineRef.current.isPaused = false;
+            engineRef.current.restartMatch();
+          }
+          return 0;
+        }
+        soundManager.playDailySpinTick();
+        return prev - 1;
+      });
+    }, 900);
+  };
+
   // Handle Joystick move
-  const handleJoystickMove = (vector: { x: number; y: number }) => {
+  const handleJoystickMove = useCallback((vector: { x: number; y: number }) => {
     if (engineRef.current) {
       engineRef.current.inputVector = vector;
     }
-  };
+  }, []);
 
-  const handleBoostChange = (isBoosting: boolean) => {
+  const handleBoostChange = useCallback((isBoosting: boolean) => {
     if (engineRef.current) {
       engineRef.current.isBoosting = isBoosting;
     }
-  };
+  }, []);
 
   const togglePause = () => {
     if (engineRef.current) {
@@ -162,7 +252,9 @@ export default function GameCanvas() {
     setStats((prev) => ({ ...prev, equippedSkinId: skinId }));
     if (engineRef.current) {
       engineRef.current.stats.equippedSkinId = skinId;
-      engineRef.current.restartMatch();
+      if (gameState === 'playing') {
+        engineRef.current.restartMatch();
+      }
     }
   };
 
@@ -180,6 +272,16 @@ export default function GameCanvas() {
         engineRef.current.stats.totalPermanentCoins = nextCoins;
       }
       return { ...prev, totalPermanentCoins: nextCoins };
+    });
+  };
+
+  const handleDeductGems = (amount: number) => {
+    setStats((prev) => {
+      const nextGems = Math.max(0, prev.totalGems - amount);
+      if (engineRef.current) {
+        engineRef.current.stats.totalGems = nextGems;
+      }
+      return { ...prev, totalGems: nextGems };
     });
   };
 
@@ -206,7 +308,9 @@ export default function GameCanvas() {
     setIsStagesOpen(false);
     if (engineRef.current) {
       engineRef.current.stats.currentStageId = stageId;
-      engineRef.current.restartMatch();
+      if (gameState === 'playing') {
+        engineRef.current.restartMatch();
+      }
     }
   };
 
@@ -217,10 +321,7 @@ export default function GameCanvas() {
 
   const handlePlayAgain = () => {
     setMatchResult({ isGameOver: false, isVictory: false });
-    if (engineRef.current) {
-      engineRef.current.restartMatch();
-      setStats({ ...engineRef.current.stats });
-    }
+    handleStartMatch();
   };
 
   const handleSpinReward = (reward: DailySpinReward) => {
@@ -242,46 +343,99 @@ export default function GameCanvas() {
     });
   };
 
+  // Claim Mission Handler
+  const handleClaimMission = (id: string) => {
+    const targetMission = missions.find((m) => m.id === id);
+    if (!targetMission || !targetMission.completed || targetMission.claimed) return;
+
+    setMissions((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, claimed: true } : m))
+    );
+
+    if (targetMission.rewardType === 'coins') {
+      handleAddCoins(targetMission.rewardAmount);
+    } else if (targetMission.rewardType === 'gems') {
+      setStats((prev) => ({ ...prev, totalGems: prev.totalGems + targetMission.rewardAmount }));
+    } else if (targetMission.rewardType === 'exp') {
+      setStats((prev) => {
+        const nextExp = prev.exp + targetMission.rewardAmount;
+        if (nextExp >= prev.expForNextLevel) {
+          return {
+            ...prev,
+            level: prev.level + 1,
+            exp: nextExp - prev.expForNextLevel,
+            expForNextLevel: Math.round(prev.expForNextLevel * 1.4),
+          };
+        }
+        return { ...prev, exp: nextExp };
+      });
+    }
+  };
+
+  // Claim Achievement Handler
+  const handleClaimAchievement = (id: string) => {
+    const targetAch = achievements.find((a) => a.id === id);
+    if (!targetAch || !targetAch.unlocked || targetAch.claimed) return;
+
+    setAchievements((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, claimed: true } : a))
+    );
+
+    if (targetAch.rewardCoins) handleAddCoins(targetAch.rewardCoins);
+    if (targetAch.rewardGems) {
+      setStats((prev) => ({ ...prev, totalGems: prev.totalGems + targetAch.rewardGems }));
+    }
+  };
+
+  const hasClaimableMissions =
+    missions.some((m) => m.completed && !m.claimed) ||
+    achievements.some((a) => a.unlocked && !a.claimed);
+
   return (
-    <div className="relative w-full h-full overflow-hidden bg-slate-950">
+    <div className="relative w-full h-full overflow-hidden bg-slate-950 font-sans select-none">
       {/* 3D WebGL Canvas Container */}
       <div ref={mountRef} className="absolute inset-0 w-full h-full" />
 
       {/* Modern HUD Overlay */}
       <HUD
         stats={stats}
+        gameState={gameState}
+        countdownSec={countdownSec}
+        onStartMatch={handleStartMatch}
         isPaused={isPaused}
         onTogglePause={togglePause}
         onOpenTycoon={() => setIsTycoonOpen(true)}
         onOpenSkins={() => setIsSkinsOpen(true)}
         onOpenSpin={() => setIsSpinOpen(true)}
+        onOpenMissions={() => setIsMissionsOpen(true)}
+        onOpenStages={() => setIsStagesOpen(true)}
         floatingTexts={floatingTexts}
         radarData={radarData}
+        leaderboardData={leaderboardData}
+        killFeedData={killFeedData}
+        hasClaimableMissions={hasClaimableMissions}
+        onTeleportBossHunter={() => engineRef.current?.trigger11MinuteTeleport()}
       />
 
       {/* Virtual Joystick for Touch / Mobile */}
-      <VirtualJoystick
-        onMove={handleJoystickMove}
-        onBoostChange={handleBoostChange}
-        disabled={
-          isPaused ||
-          isTycoonOpen ||
-          isSkinsOpen ||
-          isStagesOpen ||
-          isSpinOpen ||
-          matchResult.isGameOver
-        }
-      />
+      {gameState === 'playing' && (
+        <VirtualJoystick
+          onMove={handleJoystickMove}
+          onBoostChange={handleBoostChange}
+          disabled={
+            isPaused ||
+            isTycoonOpen ||
+            isSkinsOpen ||
+            isStagesOpen ||
+            isSpinOpen ||
+            isMissionsOpen ||
+            matchResult.isGameOver
+          }
+        />
+      )}
 
       {/* Collapsible Bottom Control Dock */}
-      <BottomControlDock
-        cameraMode={cameraMode}
-        onSetCameraMode={handleSetCameraMode}
-        onOpenTycoon={() => setIsTycoonOpen(true)}
-        onOpenSkins={() => setIsSkinsOpen(true)}
-        onOpenStages={() => setIsStagesOpen(true)}
-        onOpenDailySpin={() => setIsSpinOpen(true)}
-      />
+      {/* Dock removed for arcade simplicity */}
 
       {/* Modals */}
       <TycoonModal
@@ -306,7 +460,9 @@ export default function GameCanvas() {
         unlockedSkinIds={unlockedSkinIds}
         onUnlockSkin={handleUnlockSkin}
         coins={stats.totalPermanentCoins}
+        gems={stats.totalGems}
         onDeductCoins={handleDeductCoins}
+        onDeductGems={handleDeductGems}
         onAddCoins={handleAddCoins}
         playerLevel={stats.level}
         currentStageId={stats.currentStageId}
@@ -319,8 +475,17 @@ export default function GameCanvas() {
         onSelectStage={handleSelectStage}
       />
 
+      <MissionsAchievementsModal
+        isOpen={isMissionsOpen}
+        onClose={() => setIsMissionsOpen(false)}
+        missions={missions}
+        achievements={achievements}
+        onClaimMission={handleClaimMission}
+        onClaimAchievement={handleClaimAchievement}
+      />
+
       <GameOverModal
-        isOpen={matchResult.isGameOver}
+        isOpen={gameState === 'gameover'}
         isVictory={matchResult.isVictory}
         stats={stats}
         onPlayAgain={handlePlayAgain}

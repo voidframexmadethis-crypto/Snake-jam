@@ -37,8 +37,14 @@ export default function GameOverModal({
   const hasNextStage = STAGES.some((s) => s.id === stats.currentStageId + 1);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-md select-none">
-      <div className="relative w-full max-w-md rounded-3xl border border-slate-700 bg-slate-900 p-6 text-center shadow-2xl">
+    <div
+      onClick={onPlayAgain}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-md select-none cursor-pointer"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-md rounded-3xl border border-slate-700 bg-slate-900 p-6 text-center shadow-2xl cursor-default"
+      >
         {/* Banner Icon */}
         <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-3xl border shadow-xl">
           {isVictory ? (
@@ -63,38 +69,56 @@ export default function GameOverModal({
         </p>
 
         {/* Stats Grid */}
-        <div className="my-5 grid grid-cols-2 gap-2.5">
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-left">
+        <div className="my-4 grid grid-cols-3 gap-2">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
             <span className="text-[10px] font-bold text-slate-400 uppercase">
               Match Score
             </span>
-            <div className="text-lg font-black text-cyan-400">{stats.score}</div>
+            <div className="text-base font-black text-cyan-400">{stats.score}</div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-left">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
             <span className="text-[10px] font-bold text-slate-400 uppercase">
               Banked Coins
             </span>
-            <div className="text-lg font-black text-amber-400">
+            <div className="text-base font-black text-amber-400">
               +${stats.cashEarnedThisMatch}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-left">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
             <span className="text-[10px] font-bold text-slate-400 uppercase">
-              Snakes Eliminated
+              Kills
             </span>
-            <div className="text-lg font-black text-emerald-400">
+            <div className="text-base font-black text-emerald-400">
               {stats.botsKilled}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-left">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">
+              Pellets Eaten
+            </span>
+            <div className="text-base font-black text-pink-400">
+              {stats.pelletsEaten}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
             <span className="text-[10px] font-bold text-slate-400 uppercase">
               Peak Level
             </span>
-            <div className="text-lg font-black text-purple-400">
+            <div className="text-base font-black text-purple-400">
               LVL {stats.level}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-2.5 text-left">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">
+              Peak Length
+            </span>
+            <div className="text-base font-black text-cyan-300">
+              {stats.currentLength}m
             </div>
           </div>
         </div>
