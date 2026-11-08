@@ -36,7 +36,18 @@ class SoundManager {
     }
   }
 
+  public triggerHaptic(pattern: number | number[] = 15) {
+    if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
+      try {
+        navigator.vibrate(pattern);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   public playPelletEat() {
+    this.triggerHaptic(8);
     if (!this.enabled) return;
     this.initCtx();
     if (!this.ctx) return;
@@ -46,28 +57,29 @@ class SoundManager {
       const gain = this.ctx.createGain();
       const now = this.ctx.currentTime;
 
-      // Pentatonic pitch selection
-      const pitches = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5];
+      // Crisp high-pitched munching pop
+      const pitches = [659.25, 783.99, 880.0, 1046.5, 1318.51, 1567.98];
       const freq = pitches[Math.floor(Math.random() * pitches.length)];
 
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, now);
-      osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + 0.08);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.8, now + 0.05);
 
-      gain.gain.setValueAtTime(0.08, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
 
       osc.connect(gain);
       gain.connect(this.ctx.destination);
 
       osc.start(now);
-      osc.stop(now + 0.09);
+      osc.stop(now + 0.06);
     } catch {
       // Audio errors non-blocking
     }
   }
 
   public playPelletEatChain(comboCount: number = 1) {
+    this.triggerHaptic(12);
     if (!this.enabled) return;
     this.initCtx();
     if (!this.ctx) return;
@@ -77,22 +89,22 @@ class SoundManager {
       const gain = this.ctx.createGain();
       const now = this.ctx.currentTime;
 
-      // Base pitch rises with combo count up to 2.5x octave!
-      const pitchMultiplier = Math.min(2.5, 1 + comboCount * 0.08);
-      const baseFreq = 587.33 * pitchMultiplier;
+      // High-pitched rising munch pop
+      const pitchMultiplier = Math.min(2.8, 1 + comboCount * 0.09);
+      const baseFreq = 783.99 * pitchMultiplier;
 
       osc.type = 'sine';
       osc.frequency.setValueAtTime(baseFreq, now);
-      osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.6, now + 0.06);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.8, now + 0.05);
 
-      gain.gain.setValueAtTime(0.09, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+      gain.gain.setValueAtTime(0.14, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
 
       osc.connect(gain);
       gain.connect(this.ctx.destination);
 
       osc.start(now);
-      osc.stop(now + 0.07);
+      osc.stop(now + 0.06);
     } catch {
       // Audio errors non-blocking
     }
@@ -248,14 +260,31 @@ class SoundManager {
   }
 
   public playKill() {
+    this.triggerHaptic([50, 40, 90]);
     if (!this.enabled) return;
     this.initCtx();
     if (!this.ctx) return;
 
     try {
       const now = this.ctx.currentTime;
-      // White noise explosion crunch + sub bass drop
-      const bufferSize = this.ctx.sampleRate * 0.3;
+
+      // 1. Heavy sub-bass impact crunch
+      const bassOsc = this.ctx.createOscillator();
+      const bassGain = this.ctx.createGain();
+      bassOsc.type = 'sawtooth';
+      bassOsc.frequency.setValueAtTime(180, now);
+      bassOsc.frequency.exponentialRampToValueAtTime(32, now + 0.38);
+
+      bassGain.gain.setValueAtTime(0.4, now);
+      bassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+      bassOsc.connect(bassGain);
+      bassGain.connect(this.ctx.destination);
+      bassOsc.start(now);
+      bassOsc.stop(now + 0.38);
+
+      // 2. White noise crunch explosion
+      const bufferSize = this.ctx.sampleRate * 0.35;
       const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
@@ -267,19 +296,19 @@ class SoundManager {
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(800, now);
-      filter.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+      filter.frequency.setValueAtTime(1200, now);
+      filter.frequency.exponentialRampToValueAtTime(110, now + 0.35);
 
       const gain = this.ctx.createGain();
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      gain.gain.setValueAtTime(0.35, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
 
       noise.connect(filter);
       filter.connect(gain);
       gain.connect(this.ctx.destination);
 
       noise.start(now);
-      noise.stop(now + 0.3);
+      noise.stop(now + 0.35);
     } catch {
       // ignore
     }

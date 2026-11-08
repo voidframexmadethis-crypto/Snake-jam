@@ -152,6 +152,16 @@ export interface ChestData {
   type: 'wood' | 'gold';
 }
 
+export interface CoinPelletData {
+  id: string;
+  x: number;
+  z: number;
+  coinValue: number;
+  spinSpeed: number; // 180 deg/sec = Math.PI rad/s
+  mesh: THREE.Mesh;
+  active: boolean;
+}
+
 // Reusable math vectors for zero GC in game loop
 const _vec3A = new THREE.Vector3();
 const _vec3B = new THREE.Vector3();
@@ -207,6 +217,7 @@ export class ThreeGameEngine {
   private readonly gridDim: number = Math.ceil(2500 / 40); // arenaSize / gridSize
   private snakeCoins: SnakeEntity[] = [];
   private chests: ChestData[] = [];
+  private coinPellets: CoinPelletData[] = [];
   public shakeIntensity: number = 0;
   private pelletCombo: number = 0;
   private pelletComboTimer: number = 0;
@@ -1433,6 +1444,98 @@ export class ThreeGameEngine {
   }
 
   // ==========================================
+  // COIN PELLET & TREASURE CHEST BURST SYSTEM
+  // ==========================================
+  public spawnCoinPellet(x: number, z: number, coinValue: number = 10) {
+    let cp = this.coinPellets.find((item) => !item.active);
+    if (!cp) {
+      if (this.coinPellets.length >= 250) return; // Pool safety cap
+      const geo = new THREE.CylinderGeometry(0.45, 0.45, 0.12, 16);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffd700,
+        metalness: 1.0,
+        roughness: 0.1,
+        emissive: 0x553300,
+        emissiveIntensity: 0.3,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = Math.PI / 6; // Tilt for 3D spin view
+      this.scene.add(mesh);
+
+      cp = {
+        id: 'coin_pellet_' + Math.random().toString(36).substring(2, 8),
+        x,
+        z,
+        coinValue,
+        spinSpeed: (200 * Math.PI) / 180, // rotationSpeed = 200 deg/sec
+        mesh,
+        active: true,
+      };
+      this.coinPellets.push(cp);
+    } else {
+      cp.x = x;
+      cp.z = z;
+      cp.coinValue = coinValue;
+      cp.spinSpeed = (200 * Math.PI) / 180;
+      cp.active = true;
+      cp.mesh.visible = true;
+    }
+
+    cp.mesh.position.set(x, 0.45, z);
+  }
+
+  public openTreasureChest(chest: ChestData) {
+    chest.active = false;
+    this.scene.remove(chest.meshGroup);
+
+    soundManager.playCashOut();
+    this.spawnParticleBurst(chest.x, chest.z, '#fbbf24', 45, 'confetti');
+    this.spawnParticleBurst(chest.x, chest.z, '#ffffff', 25, 'spark');
+
+    // Direction vector facing away from player or forward
+    let dirDx = chest.x - this.player.x;
+    let dirDz = chest.z - this.player.z;
+    let forwardAngle = Math.atan2(dirDz, dirDx);
+    if (Math.hypot(dirDx, dirDz) < 0.1) {
+      forwardAngle = this.player.heading;
+    }
+
+    // ArenaTreasureChest Unity settings: totalCoins = 25, coinSpacing = 1.0f, serpentineWaveSpeed = 0.5f
+    const totalCoins = chest.type === 'gold' ? 35 : 25;
+    const coinSpacing = 1.0;
+    const serpentineWaveSpeed = 0.5;
+
+    let currentSpawnX = chest.x;
+    let currentSpawnZ = chest.z;
+
+    // Spawn slithering curved trail for "Coin Snake" (Unity ArenaTreasureChest script)
+    for (let i = 0; i < totalCoins; i++) {
+      // Calculate slithering S-curve path: offsetAngle = Mathf.Sin(i * serpentineWaveSpeed) * 35f
+      const offsetAngleDeg = Math.sin(i * serpentineWaveSpeed) * 35; // 35 degrees wave amplitude
+      const offsetAngleRad = (offsetAngleDeg * Math.PI) / 180;
+      const nextAngle = forwardAngle + offsetAngleRad;
+
+      const nextDirX = Math.cos(nextAngle);
+      const nextDirZ = Math.sin(nextAngle);
+
+      currentSpawnX += nextDirX * coinSpacing;
+      currentSpawnZ += nextDirZ * coinSpacing;
+
+      this.spawnCoinPellet(currentSpawnX, currentSpawnZ, chest.type === 'gold' ? 15 : 10);
+    }
+
+    const totalReward = totalCoins * (chest.type === 'gold' ? 15 : 10);
+    this.onFloatingText({
+      id: Math.random().toString(),
+      text: `🎁 TREASURE CHEST BURST! SLITHER TO COLLECT +${totalReward} COINS!`,
+      color: '#f59e0b',
+      x: window.innerWidth / 2,
+      y: 200,
+      opacity: 1,
+    });
+  }
+
+  // ==========================================
   // INPUT HANDLING
   // ==========================================
   private bindInputs() {
@@ -1493,6 +1596,7 @@ export class ThreeGameEngine {
       this.updatePowerups(delta);
       this.updateSnakeCoins(delta);
       this.updateChests(delta);
+      this.updateCoinPellets(delta);
       this.updateCollisions();
       this.updateParticles(delta);
 
@@ -1502,6 +1606,11 @@ export class ThreeGameEngine {
       }
       if (Math.random() < 0.003 && this.chests.length < 6) {
         this.spawnChest();
+      }
+      if (Math.random() < 0.008 && this.coinPellets.filter((cp) => cp.active).length < 60) {
+        const r = Math.sqrt(Math.random()) * (this.arenaSize / 2 - 80);
+        const a = Math.random() * Math.PI * 2;
+        this.spawnCoinPellet(Math.cos(a) * r, Math.sin(a) * r, 10);
       }
 
       if (this.pelletComboTimer > 0) {
@@ -2007,6 +2116,48 @@ export class ThreeGameEngine {
       // Floating animation
       chest.meshGroup.position.y = 0.6 + Math.sin(this.clock.getElapsedTime() * 2 + parseInt(chest.id.substring(chest.id.length - 1), 36)) * 0.2;
       chest.meshGroup.rotation.y += 0.5 * delta;
+    });
+  }
+
+  private updateCoinPellets(delta: number) {
+    this.coinPellets.forEach((cp) => {
+      if (!cp.active) return;
+
+      // Keep the coins spinning on the arena floor (180 deg/sec = Math.PI rad/s)
+      cp.mesh.rotation.y += cp.spinSpeed * delta;
+
+      const dPlayer = Math.hypot(this.player.x - cp.x, this.player.z - cp.z);
+
+      // Vacuum magnet effect
+      if (this.stats.activePowerUps.magnet > 0 && dPlayer < 28) {
+        const pullSpeed = 22 * delta;
+        cp.x += ((this.player.x - cp.x) / dPlayer) * pullSpeed;
+        cp.z += ((this.player.z - cp.z) / dPlayer) * pullSpeed;
+        cp.mesh.position.set(cp.x, 0.45, cp.z);
+      }
+
+      // Consumed by player
+      if (dPlayer < 1.6) {
+        cp.active = false;
+        cp.mesh.visible = false;
+
+        // Add gold to player wallet
+        this.stats.totalPermanentCoins += cp.coinValue;
+        this.stats.cashEarnedThisMatch += cp.coinValue;
+
+        // Play metallic coin sound effect & spark burst
+        soundManager.playCashOut();
+        this.spawnParticleBurst(cp.x, cp.z, '#ffd700', 8, 'spark');
+
+        this.onFloatingText({
+          id: Math.random().toString(),
+          text: `💰 +${cp.coinValue} COINS!`,
+          color: '#fbbf24',
+          x: window.innerWidth / 2,
+          y: 220,
+          opacity: 0.8,
+        });
+      }
     });
   }
 
@@ -2579,21 +2730,7 @@ export class ThreeGameEngine {
       if (!chest.active) return;
       const dChest = Math.hypot(this.player.x - chest.x, this.player.z - chest.z);
       if (dChest < 4.0) {
-        chest.active = false;
-        this.scene.remove(chest.meshGroup);
-        const amount = (chest.type === 'gold' ? 1000 : 300) * (1 + this.stats.upgrades.incomeLevel * 0.1);
-        this.stats.totalPermanentCoins += Math.round(amount);
-        soundManager.playCashOut();
-        this.spawnParticleBurst(chest.x, chest.z, '#fbbf24', 50, 'confetti');
-        this.spawnParticleBurst(chest.x, chest.z, '#ffffff', 30, 'spark');
-        this.onFloatingText({
-          id: Math.random().toString(),
-          text: `🎁 TREASURE CHEST! +${Math.round(amount)} COINS`,
-          color: '#f59e0b',
-          x: window.innerWidth / 2,
-          y: 220,
-          opacity: 1
-        });
+        this.openTreasureChest(chest);
       }
     });
     this.chests = this.chests.filter(c => c.active);
@@ -3039,6 +3176,12 @@ export class ThreeGameEngine {
     // Reset Chests
     this.chests.forEach((c) => this.scene.remove(c.meshGroup));
     this.chests = [];
+
+    // Reset Coin Pellets
+    this.coinPellets.forEach((cp) => {
+      cp.active = false;
+      cp.mesh.visible = false;
+    });
   }
 
   public dispose() {
@@ -3055,6 +3198,13 @@ export class ThreeGameEngine {
       });
     });
     this.bots = [];
+
+    // Cleanup Coin Pellets
+    this.coinPellets.forEach((cp) => {
+      this.scene.remove(cp.mesh);
+      cp.mesh.geometry.dispose();
+    });
+    this.coinPellets = [];
 
     // Cleanup entities
     this.snakeCoins.forEach(sc => {
