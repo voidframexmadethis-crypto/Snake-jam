@@ -52,6 +52,35 @@ export default function MultiplayerModLobbyModal({
   const [importJsonInput, setImportJsonInput] = useState('');
   const [importStatus, setImportStatus] = useState<{ success?: boolean; message?: string } | null>(null);
   const [showImportBox, setShowImportBox] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        setImportJsonInput(content);
+        const res = importModsFromJson(content);
+        if (res.success && res.mods) {
+          const merged = [...mods, ...res.mods];
+          setMods(merged);
+          const customOnly = merged.filter((m) => !m.isBuiltIn);
+          saveCustomMods(customOnly);
+          saveActiveMods(merged);
+          setImportStatus(res);
+          setShowImportBox(true);
+          soundManager.playSpinWin();
+        } else {
+          setImportStatus(res);
+          setShowImportBox(true);
+          soundManager.playPelletEat();
+        }
+      }
+    };
+    reader.readAsText(file);
+  };
 
   // Register multiplayer listeners
   React.useEffect(() => {
@@ -409,12 +438,25 @@ export default function MultiplayerModLobbyModal({
                   Enable gameplay tweaks, weapon abilities, custom physics, and export/import mods instantly.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".json"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-110 text-slate-100 text-xs font-black transition flex items-center gap-1.5 shadow-md shadow-purple-500/20"
+                >
+                  <Upload className="h-3.5 w-3.5" /> Import from Computer / Phone (.json)
+                </button>
                 <button
                   onClick={() => setShowImportBox(!showImportBox)}
                   className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-purple-300 text-xs font-black border border-purple-500/40 transition flex items-center gap-1.5"
                 >
-                  <Upload className="h-3.5 w-3.5" /> Import JSON
+                  Paste JSON
                 </button>
                 <button
                   onClick={handleExportMods}

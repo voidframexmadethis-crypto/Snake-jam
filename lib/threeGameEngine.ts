@@ -19,6 +19,7 @@ import {
   LeaderboardEntry,
   ObstacleData,
   StageDefinition,
+  getSkinById,
 } from './gameTypes';
 import {
   buildSnakeProceduralHead,
@@ -219,6 +220,7 @@ export class ThreeGameEngine {
     emissiveIntensity: 0.2,
   });
   private pelletGrid: number[][] = []; // indices into this.pellets
+  private droppedPelletPointer: number = 0;
   private readonly gridSize: number = 40;
   private readonly gridDim: number = Math.ceil(2500 / 40); // arenaSize / gridSize
   private snakeCoins: SnakeEntity[] = [];
@@ -627,6 +629,7 @@ export class ThreeGameEngine {
     p.x = Math.cos(angle) * r;
     p.z = Math.sin(angle) * r;
     p.active = true;
+    p.value = 1;
 
     // Add to new grid cell
     const gx = Math.floor((p.x + 1250) / this.gridSize);
@@ -997,10 +1000,7 @@ export class ThreeGameEngine {
   // SPAWNING PLAYER & BOTS
   // ==========================================
   private spawnPlayer() {
-    const equippedSkin =
-      INITIAL_SKINS.find((s) => s.id === this.stats.equippedSkinId) ||
-      INITIAL_SKINS[0];
-
+    const equippedSkin = getSkinById(this.stats.equippedSkinId);
     const modelType = equippedSkin.modelType || 'classic';
 
     const { headGroup, tongueMesh } = this.createSnakeHead(
@@ -1045,6 +1045,21 @@ export class ThreeGameEngine {
       segments: [],
       history: [],
     };
+
+    // Legendary Entrance Animation for Emerald Empress
+    if (this.stats.equippedSkinId === 'emerald_empress') {
+      this.spawnParticleBurst(this.player.x, this.player.z, '#10b981', 80, 'confetti');
+      this.spawnParticleBurst(this.player.x, this.player.z, '#fbbf24', 40, 'spark');
+      soundManager.playGachaLegendary();
+      this.onFloatingText({
+        id: 'empress_entrance',
+        text: '👑 THE EMERALD EMPRESS HAS ARRIVED! 👑',
+        color: '#34d399',
+        x: window.innerWidth / 2,
+        y: 200,
+        opacity: 1
+      });
+    }
 
     // Shield Bubble Mesh
     const shieldGeo = new THREE.SphereGeometry(2.2, 24, 24);
@@ -2540,21 +2555,22 @@ export class ThreeGameEngine {
   }
 
   private eatPellet(snake: SnakeEntity, pellet: PelletData) {
-    snake.targetLength += 0.5;
-    snake.exp += 10;
-    this.stats.score += 25;
+    const val = pellet.value !== undefined && pellet.value > 0 ? pellet.value : 1;
+    snake.targetLength += 0.5 * val;
+    snake.exp += Math.round(10 * val);
+    this.stats.score += Math.round(25 * val);
     this.stats.pelletsEaten++;
 
     if (snake.isPlayer) {
-      this.stats.totalPermanentCoins += 1;
-      this.stats.cashEarnedThisMatch += 1;
+      this.stats.totalPermanentCoins += Math.max(1, Math.round(val));
+      this.stats.cashEarnedThisMatch += Math.max(1, Math.round(val));
     }
 
     // Trigger snappy munch animation
     snake.targetJawAngle = 1.4;
 
     if (!this.stats.bossAlive) {
-      this.stats.stageProgress = Math.min(100, (this.stats.stageProgress || 0) + 1.8);
+      this.stats.stageProgress = Math.min(100, (this.stats.stageProgress || 0) + 1.8 * val);
       if (this.stats.stageProgress >= 100 && (!this.boss || !this.boss.alive)) {
         this.spawnStageBoss();
       }
@@ -2945,6 +2961,29 @@ export class ThreeGameEngine {
           break;
         }
       }
+
+      // Tiki Tiki Special Ponytail Wrapping Ability (wraps nearby AI opponent snakes with magical pop & pellet scatter!)
+      if (this.player.alive && bot.alive && this.player.skinModelType === 'tiki_tiki') {
+        const dWrap = Math.hypot(this.player.x - bot.x, this.player.z - bot.z);
+        if (dWrap < 4.2) {
+          soundManager.playGachaLegendary();
+          this.spawnParticleBurst(bot.x, bot.z, '#10b981', 40, 'confetti');
+          this.spawnParticleBurst(bot.x, bot.z, '#34d399', 30, 'spark');
+          const isEmpress = this.stats.equippedSkinId === 'emerald_empress';
+          this.onFloatingText({
+            id: Math.random().toString(),
+            text: isEmpress 
+              ? `👑 EMPRESS WRAP POP! Defeated ${bot.name}! ✨` 
+              : `✨ TIKI TIKI PONYTAIL WRAP POP! Defeated ${bot.name}! 🟡 Pellets Dropped!`,
+            color: '#34d399',
+            x: window.innerWidth / 2,
+            y: 160,
+            opacity: 1,
+          });
+          this.eliminateSnake(bot, this.player.name);
+          this.awardPlayerKill(bot);
+        }
+      }
     });
 
     // 3. Bot vs Bot Combat (Scale-Aware with Proximity Culling)
@@ -3155,7 +3194,7 @@ export class ThreeGameEngine {
     const skinTag = victim.customSkinName ? `[${victim.customSkinName}] ` : '';
     this.onFloatingText({
       id: `kill_${Date.now()}_${Math.random()}`,
-      text: `💎 +1 DIAMOND & +${coinReward} COINS! (Eliminated ${skinTag}${victim.name})`,
+      text: `💎 +1 DIAMOND & +${coinReward} COINS! (Devoured ${skinTag}${victim.name}) 🟡 Pellets Dropped!`,
       color: '#38bdf8',
       x: window.innerWidth / 2,
       y: 170,
@@ -3190,33 +3229,11 @@ export class ThreeGameEngine {
       this.addKillFeedEntry(msg, snake.skinGlow || '#f8fafc');
     }
 
-    // Burst poop onto arena floor!
-    const lootCount = Math.min(45, Math.floor(snake.length * 2));
-    for (let i = 0; i < lootCount; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = 1.5 + Math.random() * 8;
-      const lx = snake.x + Math.cos(angle) * dist;
-      const lz = snake.z + Math.sin(angle) * dist;
-
-      // Find inactive or random pellet slot to repurpose as brown 'poop'
-      const p = this.pellets[i % this.pellets.length];
-      if (p) {
-        p.x = lx;
-        p.z = lz;
-        p.active = true;
-        p.value = 0; // Poop has no value
-        // Use brown color for poop
-        this.pelletInstancedMesh.setColorAt(p.meshIndex, new THREE.Color(0x4B3621));
-        _mat4.makeTranslation(lx, 0.45, lz);
-        this.pelletInstancedMesh.setMatrixAt(p.meshIndex, _mat4);
-      }
-    }
-    if (this.pelletInstancedMesh.instanceColor) {
-      this.pelletInstancedMesh.instanceColor.needsUpdate = true;
-    }
+    // Scatter glowing nutritious food pellets along the snake's entire body & death epicenter!
+    this.dropPelletsFromSnake(snake);
 
     // Drop Gold Coins on death! (Requested: Coins appear after death)
-    const coinLootCount = snake.isPlayer ? 15 : 5;
+    const coinLootCount = snake.isPlayer ? 15 : 6;
     for (let i = 0; i < coinLootCount; i++) {
       const angle = Math.random() * Math.PI * 2;
       const dist = 1.0 + Math.random() * 6;
@@ -3249,6 +3266,103 @@ export class ThreeGameEngine {
       if (this.onMatchEnd) {
         this.onMatchEnd(false);
       }
+    }
+  }
+
+  /**
+   * Drops a vibrant, nutritious trail of glowing pellets along the entire length
+   * of the defeated AI snake (head + body segments) so the player can feast and grow!
+   */
+  public dropPelletsFromSnake(snake: SnakeEntity) {
+    if (!snake) return;
+
+    // Build dense drop points: epicenter burst around head + along all body segments
+    const dropPoints: { x: number; z: number }[] = [];
+
+    // 1. Defeat epicenter: burst of 14 pellets around head
+    const headBurst = 14;
+    for (let i = 0; i < headBurst; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 0.4 + Math.random() * 3.8;
+      dropPoints.push({
+        x: snake.x + Math.cos(angle) * dist,
+        z: snake.z + Math.sin(angle) * dist,
+      });
+    }
+
+    // 2. Along every visible segment of the defeated snake's body
+    snake.segments.forEach((seg) => {
+      // Drop 2 glowing food pellets per segment with slight natural scatter
+      for (let k = 0; k < 2; k++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 0.2 + Math.random() * 1.6;
+        dropPoints.push({
+          x: seg.position.x + Math.cos(angle) * dist,
+          z: seg.position.z + Math.sin(angle) * dist,
+        });
+      }
+    });
+
+    // High-vibrancy pellet colors based on the defeated snake's skin & glowing aura
+    const palette: THREE.Color[] = [
+      new THREE.Color(snake.skinPrimary || '#06b6d4'),
+      new THREE.Color(snake.skinSecondary || '#3b82f6'),
+      new THREE.Color(snake.skinGlow || '#38bdf8'),
+      new THREE.Color(0xfbbf24), // Gold Energy
+      new THREE.Color(0xec4899), // Neon Pink
+      new THREE.Color(0x10b981), // Emerald Glow
+      new THREE.Color(0x8b5cf6), // Mystic Violet
+    ];
+
+    const maxPellets = Math.min(dropPoints.length, 120);
+
+    for (let i = 0; i < maxPellets; i++) {
+      const pt = dropPoints[i];
+      // Keep within arena radius
+      const distCenter = Math.hypot(pt.x, pt.z);
+      if (distCenter > this.arenaSize / 2 - 8) continue;
+
+      const pIdx = (this.droppedPelletPointer + i) % this.pellets.length;
+      const p = this.pellets[pIdx];
+      if (!p) continue;
+
+      // 1. Remove from old spatial grid cell
+      const oldGx = Math.floor((p.x + 1250) / this.gridSize);
+      const oldGz = Math.floor((p.z + 1250) / this.gridSize);
+      const oldGIdx = oldGz * this.gridDim + oldGx;
+      if (this.pelletGrid[oldGIdx]) {
+        this.pelletGrid[oldGIdx] = this.pelletGrid[oldGIdx].filter((idx) => idx !== p.meshIndex);
+      }
+
+      // 2. Set new position and mark active with high value
+      p.x = pt.x;
+      p.z = pt.z;
+      p.active = true;
+      p.value = 1.5; // High value dropped pellets from defeated snakes!
+
+      // 3. Assign color matching the defeated snake
+      const color = palette[i % palette.length];
+      p.color = color;
+      this.pelletInstancedMesh.setColorAt(p.meshIndex, color);
+
+      // 4. Add to new spatial grid cell so player vacuum/eating detects it immediately
+      const newGx = Math.floor((p.x + 1250) / this.gridSize);
+      const newGz = Math.floor((p.z + 1250) / this.gridSize);
+      const newGIdx = newGz * this.gridDim + newGx;
+      if (this.pelletGrid[newGIdx]) {
+        this.pelletGrid[newGIdx].push(p.meshIndex);
+      }
+
+      // 5. Update matrix
+      _mat4.makeTranslation(p.x, 0.45, p.z);
+      this.pelletInstancedMesh.setMatrixAt(p.meshIndex, _mat4);
+    }
+
+    this.droppedPelletPointer = (this.droppedPelletPointer + maxPellets) % this.pellets.length;
+
+    this.pelletInstancedMesh.instanceMatrix.needsUpdate = true;
+    if (this.pelletInstancedMesh.instanceColor) {
+      this.pelletInstancedMesh.instanceColor.needsUpdate = true;
     }
   }
 
@@ -3350,7 +3464,7 @@ export class ThreeGameEngine {
     );
 
     if (this.player && this.player.alive) {
-      const equipped = INITIAL_SKINS.find((s) => s.id === this.stats.equippedSkinId) || INITIAL_SKINS[0];
+      const equipped = getSkinById(this.stats.equippedSkinId);
       rawList.push({
         name: 'YOU (' + this.player.name + ')',
         length: Math.round(this.player.length),
@@ -3358,7 +3472,7 @@ export class ThreeGameEngine {
         level: this.player.level,
         isPlayer: true,
         isBoss: false,
-        color: '#10b981',
+        color: equipped.primaryColor || '#10b981',
         customSkinName: equipped.name,
         customSkinBadge: `[${equipped.name}]`,
       });
@@ -3516,6 +3630,7 @@ export class ThreeGameEngine {
     this.stats.bossAlive = false;
     this.stats.cashEarnedThisMatch = 0;
     this.stats.gemsEarnedThisMatch = 0;
+    this.droppedPelletPointer = 0;
 
     // Reset player
     if (this.player.headGroup) this.scene.remove(this.player.headGroup);
@@ -3568,6 +3683,18 @@ export class ThreeGameEngine {
       this.scene.remove(p.mesh);
     });
     this.fireProjectiles = [];
+  }
+
+  public setPlayerSkin(skinId: string) {
+    this.stats.equippedSkinId = skinId;
+    const equippedSkin = getSkinById(skinId);
+    if (!equippedSkin) return;
+
+    if (this.player) {
+      if (this.player.headGroup) this.scene.remove(this.player.headGroup);
+      this.player.segments.forEach((s) => this.scene.remove(s.mesh));
+      this.spawnPlayer();
+    }
   }
 
   public dispose() {

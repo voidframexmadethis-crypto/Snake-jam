@@ -56,6 +56,7 @@ interface SkinsWardrobeModalProps {
   onAddCoins?: (amount: number) => void;
   playerLevel?: number;
   currentStageId?: number;
+  onOpenAiBuilder?: () => void;
 }
 
 // -------------------------------------------------------------
@@ -273,6 +274,7 @@ export default function SkinsWardrobeModal({
   onAddCoins,
   playerLevel = 1,
   currentStageId = 1,
+  onOpenAiBuilder,
 }: SkinsWardrobeModalProps) {
   // Navigation & Category Filtering
   const [selectedCategory, setSelectedCategory] = useState<SkinCategory | 'all'>('all');
@@ -353,8 +355,9 @@ export default function SkinsWardrobeModal({
       currencyFilter,
       page,
       pageSize: PAGE_SIZE,
+      unlockedIds: unlockedSkinIds,
     });
-  }, [selectedCategory, selectedRarity, searchQuery, currencyFilter, page]);
+  }, [selectedCategory, selectedRarity, searchQuery, currencyFilter, page, unlockedSkinIds]);
 
   // Derived active preview skin (defaults to equippedSkinId)
   const activePreviewSkinId = selectedPreviewSkinId || equippedSkinId;
@@ -561,6 +564,16 @@ export default function SkinsWardrobeModal({
                 <span>{gems.toLocaleString()} 💎</span>
               </div>
             </div>
+
+            {/* AI Snake Builder Button */}
+            <button
+              onClick={onOpenAiBuilder}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 via-purple-600 to-pink-600 text-slate-100 text-xs font-extrabold hover:brightness-110 active:scale-95 transition shadow-md shadow-cyan-500/20"
+            >
+              <Sparkles className="h-4 w-4 text-cyan-300 animate-pulse" />
+              <span className="hidden sm:inline">✨ AI Snake Builder (5s)</span>
+              <span className="sm:hidden">✨ AI Builder</span>
+            </button>
 
             {/* Mystery Box CTA Button */}
             <button

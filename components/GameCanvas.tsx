@@ -15,6 +15,7 @@ import {
   Mission,
   Achievement,
   LeaderboardEntry,
+  registerCustomAiSkin,
 } from '@/lib/gameTypes';
 import { soundManager } from '@/lib/audio';
 import HUD from './HUD';
@@ -28,6 +29,7 @@ import TycoonModal from './TycoonPadsOverlay';
 import GameOverModal from './GameOverModal';
 import MissionsAchievementsModal from './MissionsAchievementsModal';
 import MultiplayerModLobbyModal from './MultiplayerModLobbyModal';
+import AiSnakeBuilderModal from './AiSnakeBuilderModal';
 import { MultiplayerRoom } from '@/lib/multiplayerSystem';
 
 const INITIAL_STATS: GameStats = {
@@ -64,6 +66,7 @@ const INITIAL_STATS: GameStats = {
   bossMaxHp: 600,
   stageProgress: 0,
   bossPhase: 1,
+  totalMissionsCompleted: 0,
 };
 
 interface LastMatchResults {
@@ -89,6 +92,7 @@ export default function GameCanvas() {
     let initialUpgrades = INITIAL_STATS.upgrades;
     let initialLevel = 1;
     let initialSkins = ['emerald'];
+    let initialMissionsCount = 0;
 
     try {
       const savedCoins = localStorage.getItem('SavedLifetimeCoins');
@@ -96,6 +100,7 @@ export default function GameCanvas() {
       const savedUpgrades = localStorage.getItem('SavedUpgrades');
       const savedLevel = localStorage.getItem('SavedLevel');
       const savedSkins = localStorage.getItem('SavedUnlockedSkins');
+      const savedMissionsCount = localStorage.getItem('SavedTotalMissionsCompleted');
 
       if (savedCoins !== null && savedCoins !== '') {
         const val = parseInt(savedCoins, 10);
@@ -107,6 +112,10 @@ export default function GameCanvas() {
       }
       if (savedUpgrades) {
         initialUpgrades = JSON.parse(savedUpgrades);
+      }
+      if (savedMissionsCount) {
+        const val = parseInt(savedMissionsCount, 10);
+        if (!isNaN(val)) initialMissionsCount = val;
       }
       if (savedLevel) {
         const val = parseInt(savedLevel, 10);
@@ -129,6 +138,7 @@ export default function GameCanvas() {
         totalGems: initialGems,
         upgrades: initialUpgrades,
         level: initialLevel,
+        totalMissionsCompleted: initialMissionsCount,
       }));
       setUnlockedSkinIds(initialSkins);
       setHasMounted(true);
@@ -155,6 +165,7 @@ export default function GameCanvas() {
   const [isMissionsOpen, setIsMissionsOpen] = useState(false);
   const [isMultiplayerOpen, setIsMultiplayerOpen] = useState(false);
   const [isModsOpen, setIsModsOpen] = useState(false);
+  const [isAiBuilderOpen, setIsAiBuilderOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -177,11 +188,12 @@ export default function GameCanvas() {
         localStorage.setItem('SavedUpgrades', JSON.stringify(stats.upgrades));
         localStorage.setItem('SavedLevel', stats.level.toString());
         localStorage.setItem('SavedUnlockedSkins', JSON.stringify(unlockedSkinIds));
+        localStorage.setItem('SavedTotalMissionsCompleted', stats.totalMissionsCompleted.toString());
       } catch (e) {
         console.warn('Error saving game data:', e);
       }
     }
-  }, [hasMounted, gameState, stats.totalPermanentCoins, stats.totalGems, stats.upgrades, stats.level, unlockedSkinIds]);
+  }, [hasMounted, gameState, stats.totalPermanentCoins, stats.totalGems, stats.upgrades, stats.level, unlockedSkinIds, stats.totalMissionsCompleted]);
 
   // Floating text queue
   const addFloatingText = useCallback((textData: FloatingText) => {
@@ -403,7 +415,7 @@ export default function GameCanvas() {
   const handleEquipSkin = (skinId: string) => {
     setStats((prev) => ({ ...prev, equippedSkinId: skinId }));
     if (engineRef.current) {
-      engineRef.current.stats.equippedSkinId = skinId;
+      engineRef.current.setPlayerSkin(skinId);
       if (gameState === 'playing') {
         engineRef.current.restartMatch();
       }
@@ -522,6 +534,27 @@ export default function GameCanvas() {
         return { ...prev, exp: nextExp };
       });
     }
+
+    // Increment mission counter
+    setStats((prev) => {
+      const nextCount = prev.totalMissionsCompleted + 1;
+      
+      // Secret Unlock Check: Emerald Empress (100 missions)
+      if (nextCount === 100 && !unlockedSkinIds.includes('emerald_empress')) {
+        handleUnlockSkin('emerald_empress');
+        addFloatingText({
+          id: 'secret_unlock_empress',
+          text: 'THE EMERALD EMPRESS HAS AWAKENED! 👑✨',
+          color: '#34d399',
+          x: window.innerWidth / 2,
+          y: 120,
+          opacity: 1
+        });
+        soundManager.playGachaLegendary();
+      }
+      
+      return { ...prev, totalMissionsCompleted: nextCount };
+    });
   };
 
   // Claim Achievement Handler
@@ -592,6 +625,7 @@ export default function GameCanvas() {
             onTeleportBossHunter={() => engineRef.current?.trigger11MinuteTeleport()}
             lastMatchResults={lastMatchResults}
             onExitToMenu={handleBackToMenu}
+            onOpenAiBuilder={() => setIsAiBuilderOpen(true)}
           />
 
           {/* Virtual Joystick for Touch / Mobile */}
@@ -640,6 +674,21 @@ export default function GameCanvas() {
             onAddCoins={handleAddCoins}
             playerLevel={stats.level}
             currentStageId={stats.currentStageId}
+            onOpenAiBuilder={() => {
+              setIsSkinsOpen(false);
+              setIsAiBuilderOpen(true);
+            }}
+          />
+
+          <AiSnakeBuilderModal
+            isOpen={isAiBuilderOpen}
+            onClose={() => setIsAiBuilderOpen(false)}
+            onSaveAndEquip={(skin) => {
+              registerCustomAiSkin(skin);
+              handleUnlockSkin(skin.id);
+              handleEquipSkin(skin.id);
+              setIsAiBuilderOpen(false);
+            }}
           />
 
           <StageSelectModal

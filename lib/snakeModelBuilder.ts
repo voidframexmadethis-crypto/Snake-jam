@@ -785,6 +785,103 @@ export function buildSnakeProceduralHead(
     }
     group.add(jawGroup);
   }
+  else if (modelType === 'tiki_tiki') {
+    // Elegant emerald head
+    const headGeo = new THREE.SphereGeometry(0.85 * scale, 16, 16);
+    headGeo.scale(1.0, 0.9, 1.2);
+    const headMat = new THREE.MeshStandardMaterial({
+      color: primaryColor,
+      roughness: 0.4,
+      metalness: 0.3,
+    });
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.set(0, 0.55 * scale, 0.2 * scale);
+    head.castShadow = !isSoftwareGl;
+    group.add(head);
+
+    // Golden Crown / Tiara
+    const crownMat = new THREE.MeshStandardMaterial({
+      color: 0xfbbf24,
+      metalness: 0.9,
+      roughness: 0.1,
+      emissive: 0xf59e0b,
+      emissiveIntensity: 0.4,
+    });
+    const tiaraGeo = new THREE.TorusGeometry(0.5 * scale, 0.06 * scale, 8, 24);
+    tiaraGeo.rotateX(Math.PI / 2);
+    const tiara = new THREE.Mesh(tiaraGeo, crownMat);
+    tiara.position.set(0, 1.15 * scale, 0.1 * scale);
+    group.add(tiara);
+
+    // Glowing emerald eyes
+    const eyeGeo = new THREE.SphereGeometry(0.18 * scale, 12, 12);
+    const eyeMat = new THREE.MeshStandardMaterial({
+      color: glowColor,
+      emissive: glowColor,
+      emissiveIntensity: 1.2,
+    });
+    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeL.position.set(-0.35 * scale, 0.7 * scale, 0.75 * scale);
+    group.add(eyeL);
+    const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeR.position.set(0.35 * scale, 0.7 * scale, 0.75 * scale);
+    group.add(eyeR);
+
+    // Flowing Ponytail extending backward
+    const isEmpress = primaryColor === '#064e3b';
+    const hairColor = isEmpress ? 0x111827 : 0x064e3b; // Near black for Empress
+    const hairMat = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.5 });
+    
+    // Emerald Empress Specific: Brown Complexion & Blue Eyes
+    if (isEmpress) {
+      headMat.color.set('#8b5a2b'); // Warm brown complexion
+      eyeMat.color.set('#3b82f6');  // Bright blue eyes
+      eyeMat.emissive.set('#3b82f6');
+      
+      // Neckline outline (Dark Green)
+      const neckGeo = new THREE.TorusGeometry(0.85 * scale, 0.05 * scale, 8, 32);
+      neckGeo.rotateX(Math.PI / 2);
+      const neckMat = new THREE.MeshStandardMaterial({ color: 0x064e3b });
+      const neck = new THREE.Mesh(neckGeo, neckMat);
+      neck.position.set(0, 0.45 * scale, 0.15 * scale);
+      group.add(neck);
+
+      // Luxury Handbag (Gucci-style)
+      const bagGroup = new THREE.Group();
+      const bagBodyGeo = new THREE.BoxGeometry(0.6 * scale, 0.5 * scale, 0.25 * scale);
+      const bagMat = new THREE.MeshStandardMaterial({ color: 0x064e3b }); // Dark green
+      const bagBody = new THREE.Mesh(bagBodyGeo, bagMat);
+      bagGroup.add(bagBody);
+      
+      // Gold hardware
+      const goldMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 1.0, roughness: 0.1 });
+      const handleGeo = new THREE.TorusGeometry(0.15 * scale, 0.03 * scale, 8, 16, Math.PI);
+      const handle = new THREE.Mesh(handleGeo, goldMat);
+      handle.position.y = 0.25 * scale;
+      bagGroup.add(handle);
+      
+      // Emblem
+      const emblemGeo = new THREE.TorusGeometry(0.08 * scale, 0.02 * scale, 8, 16);
+      const emblem = new THREE.Mesh(emblemGeo, goldMat);
+      emblem.position.z = 0.13 * scale;
+      bagGroup.add(emblem);
+      
+      bagGroup.position.set(0.8 * scale, 0.2 * scale, -0.4 * scale);
+      bagGroup.rotation.y = -0.3;
+      group.add(bagGroup);
+    }
+
+    const strands = isEmpress ? 6 : 4;
+    const hairLength = isEmpress ? 3.0 : 1.8;
+    for (let h = 0; h < strands; h++) {
+      const strandGeo = new THREE.CylinderGeometry(0.12 * scale * (1 - h * 0.1), 0.06 * scale, hairLength * scale, 8);
+      strandGeo.rotateX(Math.PI / 2);
+      const strand = new THREE.Mesh(strandGeo, hairMat);
+      const offX = isEmpress ? (h - 2.5) * 0.1 * scale : (h - 1.5) * 0.15 * scale;
+      strand.position.set(offX, (0.8 - h * 0.08) * scale, (-0.6 - h * 0.5) * scale);
+      group.add(strand);
+    }
+  }
   else {
     const fallbackGeo = new THREE.SphereGeometry(0.8 * scale, 16, 16);
     const fallbackMat = new THREE.MeshStandardMaterial({ color: primaryColor });
@@ -805,16 +902,37 @@ export function buildSnakeSegmentMesh(
   scale: number = 1.0
 ): THREE.Mesh {
   const isAlt = index % 2 === 0;
-  // Minecraft block geometry for snake body segments
-  const geo = new THREE.BoxGeometry(0.9 * scale, 0.9 * scale, 0.9 * scale);
+  let geo: THREE.BufferGeometry;
+  let mat: THREE.Material;
 
-  const mat = new THREE.MeshStandardMaterial({
-    color: isAlt ? primaryColor : secondaryColor,
-    roughness: 0.8,
-    metalness: 0.1,
-    emissive: isAlt ? glowColor : 0x000000,
-    emissiveIntensity: isAlt ? 0.3 : 0,
-  });
+  if (modelType === 'tiki_tiki') {
+    geo = new THREE.CylinderGeometry(0.6 * scale, 0.7 * scale, 0.85 * scale, 12);
+    geo.rotateX(Math.PI / 2);
+    
+    const isEmpress = primaryColor === '#064e3b';
+    mat = new THREE.MeshStandardMaterial({
+      color: isAlt ? primaryColor : secondaryColor,
+      roughness: 0.3,
+      metalness: 0.4,
+      emissive: isEmpress ? (isAlt ? 0x000000 : glowColor) : glowColor,
+      emissiveIntensity: 0.4,
+    });
+
+    // Floral Pattern for Empress (Visual representation via alternating colors and emissive highlights)
+    if (isEmpress && !isAlt) {
+      // For performance in instanced meshes, we use the secondary color to represent floral highlights
+      // on the emerald base gown segments.
+    }
+  } else {
+    geo = new THREE.BoxGeometry(0.9 * scale, 0.9 * scale, 0.9 * scale);
+    mat = new THREE.MeshStandardMaterial({
+      color: isAlt ? primaryColor : secondaryColor,
+      roughness: 0.8,
+      metalness: 0.1,
+      emissive: isAlt ? glowColor : 0x000000,
+      emissiveIntensity: isAlt ? 0.3 : 0,
+    });
+  }
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = !isSoftwareGl;

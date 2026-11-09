@@ -25,6 +25,7 @@ import {
   RotateCcw,
   Users,
   Wrench,
+  Wand2,
 } from 'lucide-react';
 import { 
   GameStats, 
@@ -65,6 +66,7 @@ interface HUDProps {
   onTeleportBossHunter?: () => void;
   lastMatchResults?: { coins: number; gems: number; score: number } | null;
   onExitToMenu?: () => void;
+  onOpenAiBuilder?: () => void;
 }
 
 export default function HUD({
@@ -87,6 +89,7 @@ export default function HUD({
   onTeleportBossHunter,
   lastMatchResults,
   onExitToMenu,
+  onOpenAiBuilder,
 }: HUDProps) {
   const [muted, setMuted] = React.useState(false);
   const [showHelp, setShowHelp] = React.useState(false);
@@ -264,6 +267,20 @@ export default function HUD({
               <Wrench className="h-4 w-4 text-purple-400" />
               <span>Mod Studio</span>
             </button>
+
+            {onOpenAiBuilder && (
+              <button
+                onClick={onOpenAiBuilder}
+                className="group relative flex items-center gap-2 rounded-2xl border-2 border-purple-400 bg-slate-900/95 px-4 py-2.5 text-xs font-black text-purple-300 hover:bg-purple-900/40 transition-all shadow-[0_0_15px_rgba(168,85,247,0.3)] hover:scale-105 active:scale-95"
+              >
+                <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-purple-500 to-pink-500 opacity-30 blur group-hover:opacity-60 transition duration-300" />
+                <Wand2 className="h-4 w-4 text-purple-400 animate-pulse" />
+                <span className="relative">AI Snake Builder</span>
+                <span className="relative ml-0.5 rounded bg-purple-500/30 px-1.5 py-0.5 text-[9px] font-black text-cyan-300 border border-purple-400/50">
+                  5s
+                </span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -399,34 +416,6 @@ export default function HUD({
                     );
                   })()}
 
-                  {/* Power-up Icons on Minimap */}
-                  {radarData.powerups?.map((p, idx) => {
-                    const nx = 50 + ((p.x - radarData.playerPos.x) / radarData.maxRadius) * 45;
-                    const nz = 50 + ((p.z - radarData.playerPos.z) / radarData.maxRadius) * 45;
-                    if (nx < 0 || nx > 100 || nz < 0 || nz > 100) return null;
-                    let symbol = '⚡';
-                    if (p.type === 'magnet') symbol = '🧲';
-                    else if (p.type === 'speed') symbol = '⚡';
-                    else if (p.type === 'shield') symbol = '🛡️';
-                    else if (p.type === 'fire') symbol = '🔥';
-
-                    return (
-                      <div
-                        key={idx}
-                        className="absolute -translate-x-1/2 -translate-y-1/2 text-xs font-black z-30 animate-pulse drop-shadow-[0_0_4px_rgba(255,255,255,0.8)]"
-                        style={{ left: `${nx}%`, top: `${nz}%` }}
-                        title={`${p.type.toUpperCase()} Power-up`}
-                      >
-                        {symbol}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex items-center justify-between w-full mt-1.5 text-[8px] font-bold text-slate-400 px-1">
-                  <span>🧲 Mag</span>
-                  <span>⚡ Spd</span>
-                  <span>🛡️ Shd</span>
-                  <span>🔥 Fir</span>
                 </div>
               </div>
             )}

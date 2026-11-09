@@ -39,7 +39,8 @@ export type SkinModelType =
   | 'snowman'
   | 'yeti'
   | 'electric_eel'
-  | 'shark';
+  | 'shark'
+  | 'tiki_tiki';
 export type SkinUnlockMethod = 'default' | 'coins' | 'milestone' | 'boss' | 'ad_watch' | 'gacha';
 
 export interface SkinDefinition {
@@ -59,6 +60,7 @@ export interface SkinDefinition {
   unlockType: SkinUnlockMethod;
   unlocked?: boolean;
   statBonus?: string;
+  isSecret?: boolean;
 }
 
 export interface CollectionSet {
@@ -215,6 +217,34 @@ export function computeCollectionPerks(unlockedSkinIds: string[]) {
 // HANDCRAFTED FEATURED SKINS
 // ---------------------------------------------------------------------------
 export const HANDCRAFTED_SKINS: SkinDefinition[] = [
+  {
+    id: 'tiki_tiki',
+    name: 'Tiki Tiki',
+    category: 'mythical',
+    rarity: 'legendary',
+    modelType: 'tiki_tiki',
+    description: 'Legendary island queen with an emerald green gown, flowing natural ponytail, and opponent wrapping power!',
+    primaryColor: '#059669',
+    secondaryColor: '#10b981',
+    glowColor: '#34d399',
+    unlockType: 'default',
+    unlocked: true,
+    statBonus: '+25% Speed & Ponytail Wrap',
+  },
+  {
+    id: 'emerald_empress',
+    name: 'Emerald Empress',
+    category: 'mythical',
+    rarity: 'legendary',
+    modelType: 'tiki_tiki', // Using tiki_tiki base but will enhance in builder
+    description: 'The Awakened Queen of the Verdant Isles. Her emerald floral gown and majestic ponytail command the arena.',
+    primaryColor: '#064e3b', // Darker emerald for gown
+    secondaryColor: '#10b981', // Brighter emerald for flowers
+    glowColor: '#34d399',
+    unlockType: 'milestone',
+    isSecret: true,
+    statBonus: '+30% Speed & Empress Wrap',
+  },
   // --- Minimalist ---
   {
     id: 'emerald',
@@ -758,13 +788,64 @@ export function getProceduralSkin(index: number): SkinDefinition {
   };
 }
 
+const CUSTOM_AI_SKINS_KEY = 'SnakeTycoon_CustomAISkins_v1';
+const customAiSkinsCache: Map<string, SkinDefinition> = new Map();
+
+export function registerCustomAiSkin(skin: SkinDefinition) {
+  customAiSkinsCache.set(skin.id, skin);
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(CUSTOM_AI_SKINS_KEY);
+      const list: SkinDefinition[] = stored ? JSON.parse(stored) : [];
+      const updated = [skin, ...list.filter((s) => s.id !== skin.id)].slice(0, 50);
+      localStorage.setItem(CUSTOM_AI_SKINS_KEY, JSON.stringify(updated));
+    } catch {}
+  }
+}
+
+export function getStoredCustomAiSkins(): SkinDefinition[] {
+  if (typeof window === 'undefined') return Array.from(customAiSkinsCache.values());
+  try {
+    const stored = localStorage.getItem(CUSTOM_AI_SKINS_KEY);
+    if (stored) {
+      const list: SkinDefinition[] = JSON.parse(stored);
+      list.forEach((s) => customAiSkinsCache.set(s.id, s));
+      return list;
+    }
+  } catch {}
+  return Array.from(customAiSkinsCache.values());
+}
+
 /**
  * High-performance O(1) skin resolver by ID.
- * Accurately finds handcrafted skins or generates procedural skin by numeric ID.
+ * Accurately finds handcrafted skins, custom AI-built skins, or generates procedural skin by numeric ID.
  */
 export function getSkinById(id: string): SkinDefinition {
+  if (!id) return HANDCRAFTED_SKINS[0];
+
+  // 1. Check custom AI skins cache & localStorage
+  if (customAiSkinsCache.has(id)) {
+    return customAiSkinsCache.get(id)!;
+  }
+  if (typeof window !== 'undefined' && id.startsWith('ai_')) {
+    try {
+      const stored = localStorage.getItem(CUSTOM_AI_SKINS_KEY);
+      if (stored) {
+        const list: SkinDefinition[] = JSON.parse(stored);
+        const match = list.find((s) => s.id === id);
+        if (match) {
+          customAiSkinsCache.set(id, match);
+          return match;
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Check handcrafted featured skins
   const found = HANDCRAFTED_SKINS.find((s) => s.id === id);
   if (found) return found;
+
+  // 3. Check procedural skins
   if (id && id.startsWith('proc_')) {
     const idx = parseInt(id.slice(5), 10);
     if (!isNaN(idx) && idx >= 1 && idx <= TOTAL_SKINS_COUNT) {
@@ -782,6 +863,7 @@ export interface SkinsQueryOptions {
   currencyFilter?: 'all' | 'coins' | 'gems' | 'ads';
   page?: number;
   pageSize?: number;
+  unlockedIds?: string[];
 }
 
 export interface SkinsQueryResult {
@@ -804,6 +886,7 @@ export function querySkinsPage(options: SkinsQueryOptions = {}): SkinsQueryResul
     currencyFilter = 'all',
     page = 1,
     pageSize = PAGE_SIZE,
+    unlockedIds = [],
   } = options;
 
   const searchTrim = searchQuery.trim().toLowerCase();
@@ -831,6 +914,10 @@ export function querySkinsPage(options: SkinsQueryOptions = {}): SkinsQueryResul
     if (currencyFilter === 'gems' && !s.gemPrice) return false;
     if (currencyFilter === 'ads' && s.unlockType !== 'ad_watch') return false;
     if (searchTrim && !s.name.toLowerCase().includes(searchTrim) && !s.description.toLowerCase().includes(searchTrim)) {
+      return false;
+    }
+    // Secret skins are hidden until unlocked
+    if (s.isSecret && !unlockedIds.includes(s.id)) {
       return false;
     }
     return true;
@@ -962,6 +1049,7 @@ export interface GameStats {
   bossMaxHp: number;
   stageProgress: number; // 0 to 100%
   bossPhase: number; // 1 or 2
+  totalMissionsCompleted: number;
 }
 
 export interface EvolutionTier {
